@@ -1,7 +1,6 @@
-package main
+package minimalcsp
 
 import (
-	"fmt"
 	"log"
 	"strings"
 
@@ -10,8 +9,23 @@ import (
 
 //GetSources returns slices of the discovered src attributes for each of the CSP types.
 //func GetSources(s string) {
-func GetSources(string s) [][]string {
-	items := [][]string{{"script", "src"}, {"link", "href"}, {"img", "src"}}
+func GetSources(s string) [][]string {
+	// const (
+	// 	script = iota
+	// 	link
+	// 	img
+	// 	embed
+	// 	object
+	// 	canvas
+	// 	figure
+	// 	form
+	// 	iframe
+	// 	source
+	// 	video
+	// 	audio
+	// )
+
+	var sources = [][]string{}
 
 	doc, err := html.Parse(strings.NewReader(s))
 	if err != nil {
@@ -20,11 +34,29 @@ func GetSources(string s) [][]string {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == items[1][0] {
+		//Change to switch statement to accomodate all the different types of n.Data we will need to extract differently.
+		switch {
+		case n.Data == "link":
 			for _, a := range n.Attr {
-				if a.Key == items[1][1] {
-					fmt.Println(a.Val)
-					break
+				if a.Key == "rel" && a.Val == "stylesheet" {
+					for _, b := range n.Attr {
+						if b.Key == "href" {
+							css := []string{"style", b.Val}
+							sources = append(sources, css)
+						}
+					}
+				}
+			}
+		case n.Data == "script":
+			if n.Attr == nil {
+				script := []string{n.Data, "inline"}
+				sources = append(sources, script)
+			} else {
+				for _, a := range n.Attr {
+					if a.Key == "src" {
+						script := []string{n.Data, a.Val}
+						sources = append(sources, script)
+					}
 				}
 			}
 		}
@@ -33,8 +65,33 @@ func GetSources(string s) [][]string {
 		}
 	}
 	f(doc)
+	return sources
 }
 
+// MakePolicy parses the slice of sources, deduplicates, matches with CSP rule, and prints the policy to StdOut.
 func MakePolicy(s [][]string) {
+
+	// const (
+	// 	base-uri = iota
+	// 	child-src
+	// 	connect-src
+	// 	default-src
+	// 	font-src
+	// 	form-action
+	// 	frame-ancestors
+	// 	frame-src
+	// 	img-src
+	// 	manifest-src
+	// 	media-src
+	// 	object-src
+	// 	plugin-types
+	// 	referrer
+	// 	reflected-xss
+	// 	report-uri
+	// 	sandbox
+	// 	script-src
+	// 	style-src
+	// 	upgrade-insecure-requests
+	// )
 
 }
