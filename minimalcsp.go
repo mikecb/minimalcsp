@@ -1,6 +1,7 @@
 package minimalcsp
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -10,9 +11,10 @@ import (
 //GetSources returns slices of the discovered src attributes for each of the CSP types.
 //func GetSources(s string) {
 func GetSources(s string) [][]string {
-	// const (
-	// 	script = iota
-	// 	link
+
+	// Tags to handle
+	// 	script
+	// 	link - stylesheet, icon, shortcut icon,
 	// 	img
 	// 	embed
 	// 	object
@@ -23,7 +25,6 @@ func GetSources(s string) [][]string {
 	// 	source
 	// 	video
 	// 	audio
-	// )
 
 	var sources = [][]string{}
 
@@ -34,29 +35,54 @@ func GetSources(s string) [][]string {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		//Change to switch statement to accomodate all the different types of n.Data we will need to extract differently.
 		switch {
 		case n.Data == "link":
 			for _, a := range n.Attr {
 				if a.Key == "rel" && a.Val == "stylesheet" {
 					for _, b := range n.Attr {
 						if b.Key == "href" {
-							css := []string{"style", b.Val}
-							sources = append(sources, css)
+							tuple := []string{"style-src", b.Val}
+							sources = append(sources, tuple)
+						}
+					}
+				} else if a.Key == "rel" && a.Val == "icon" {
+					for _, b := range n.Attr {
+						if b.Key == "href" {
+							tuple := []string{"img-src", b.Val}
+							sources = append(sources, tuple)
+						}
+					}
+				} else if a.Key == "rel" && a.Val == "shortcut icon" {
+					for _, b := range n.Attr {
+						if b.Key == "href" {
+							tuple := []string{"img-src", b.Val}
+							sources = append(sources, tuple)
 						}
 					}
 				}
 			}
 		case n.Data == "script":
 			if n.Attr == nil {
-				script := []string{n.Data, "inline"}
-				sources = append(sources, script)
+				tuple := []string{n.Data, "unsafe-inline"}
+				sources = append(sources, tuple)
 			} else {
 				for _, a := range n.Attr {
 					if a.Key == "src" {
-						script := []string{n.Data, a.Val}
-						sources = append(sources, script)
+						tuple := []string{"script-src", a.Val}
+						sources = append(sources, tuple)
 					}
+				}
+			}
+		case n.Data == "style":
+			if n.Attr == nil {
+				tuple := []string{"style-src", "unsafe-inline"}
+				sources = append(sources, tuple)
+			}
+		case n.Data == "img":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"img-src", a.Val}
+					sources = append(sources, tuple)
 				}
 			}
 		}
@@ -69,29 +95,33 @@ func GetSources(s string) [][]string {
 }
 
 // MakePolicy parses the slice of sources, deduplicates, matches with CSP rule, and prints the policy to StdOut.
-func MakePolicy(s [][]string) {
+func MakePolicy(s string) {
+	sources := GetSources(s)
+	var policy []string
+	for _, a := range sources {
+		policy = append(policy, strings.Join(a, " "))
+	}
+	fmt.Printf("%s", policy)
 
-	// const (
-	// 	base-uri = iota
-	// 	child-src
-	// 	connect-src
+	// Directives to handle.
+	// 	base-uri
+	// 	child-src - iframe
+	// 	connect-src - xmlhttprequest, websocket, eventsource
 	// 	default-src
-	// 	font-src
-	// 	form-action
-	// 	frame-ancestors
-	// 	frame-src
-	// 	img-src
+	// 	font-src - @font-face
+	// 	form-action - form
+	// 	frame-ancestors - frame iframe (who can embed this page)
+	// 	img-src - img, link rel="icon or favicon"
 	// 	manifest-src
-	// 	media-src
-	// 	object-src
+	// 	media-src audio video
+	// 	object-src object embed applet
 	// 	plugin-types
 	// 	referrer
 	// 	reflected-xss
 	// 	report-uri
 	// 	sandbox
 	// 	script-src
-	// 	style-src
+	// 	style-src style and style attributes
 	// 	upgrade-insecure-requests
-	// )
 
 }
