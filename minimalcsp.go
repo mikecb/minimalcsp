@@ -9,22 +9,11 @@ import (
 )
 
 //GetSources returns slices of the discovered src attributes for each of the CSP types.
-//func GetSources(s string) {
 func GetSources(s string) [][]string {
 
 	// Tags to handle
-	// 	script
-	// 	link - stylesheet, icon, shortcut icon,
-	// 	img
-	// 	embed
-	// 	object
 	// 	canvas
 	// 	figure
-	// 	form
-	// 	iframe
-	// 	source
-	// 	video
-	// 	audio
 
 	var sources = [][]string{}
 
@@ -85,6 +74,70 @@ func GetSources(s string) [][]string {
 					sources = append(sources, tuple)
 				}
 			}
+		case n.Data == "embed":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"object-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "object":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"object-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "canvas":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"img-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "figure":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"img-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "form":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"form-action", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "iframe":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"child-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "source":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"media-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "audio":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"media-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+		case n.Data == "video":
+			for _, a := range n.Attr {
+				if a.Key == "src" {
+					tuple := []string{"media-src", a.Val}
+					sources = append(sources, tuple)
+				}
+			}
+
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			f(c)
@@ -110,7 +163,6 @@ func MakePolicy(s string) {
 	// 	default-src
 	// 	font-src - @font-face
 	// 	form-action - form
-	// 	frame-ancestors - frame iframe (who can embed this page)
 	// 	img-src - img, link rel="icon or favicon"
 	// 	manifest-src
 	// 	media-src audio video
