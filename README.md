@@ -4,7 +4,7 @@
 
 Generate the minimal working Content Security Policy (CSP) for a given webpage.
 
-> **Status: early.** minimalcsp runs a page in headless Chrome, generates a strict policy, and checks the page under that policy. Policies deny by default, so anything a run doesn't reach gets blocked, such as a page behind a login. Try a policy with `Content-Security-Policy-Report-Only` before enforcing it. See the [roadmap](TODO.md).
+> **Status: early.** minimalcsp runs a page in headless Chrome, generates a strict policy, and checks the page under that policy. Policies deny by default, so anything a run doesn't reach gets blocked, such as a page behind a login. Try a policy in report-only mode before enforcing it, as [Rolling out a policy](#rolling-out-a-policy) describes. See the [roadmap](TODO.md).
 
 ## Why
 
@@ -181,6 +181,52 @@ Other sources can still be forged, and one an attacker added could let them send
 Reports can hold private data, so query strings are dropped, and clients are stored as a hash that changes on restart. Samples of inline code are kept. A `Tally` is kept in memory, so to keep reports past a restart or combine servers, store them from `Receive` and pass them to `Add` later.
 
 `ReportingTo` uses `report-uri`, not the newer `report-to`. Chrome ignores `report-uri` when both are present, and `report-to` doesn't work on plain HTTP, so listing both loses every report from those pages. `ReportHandler` accepts both formats, so a site already using the Reporting API can point it there.
+
+### Rolling out a policy
+
+A policy that's too strict breaks your site for real visitors, so try it where it can't do any harm first.
+
+**1. Generate a policy and fix what it finds.** Crawl enough of the site to cover its different kinds of page:
+
+```bash
+gencsp -pages 20 https://example.com
+```
+
+Work through the output until the command exits with status 0. `blocked:` lines are inline code to rewrite, and `violation:` lines are anything else the page did that the policy didn't allow.
+
+**2. Make the page changes.** Deploy what the `change:` lines ask for, using `Policy.Apply` in a build step for `integrity` attributes, or your templates for nonces. These need to be live before you try the policy, or scripts get reported that are fine.
+
+`integrity` attributes take effect right away, whatever the policy says. A cross-origin script without CORS fails as soon as it has one, and so does any script that later changes. `gencsp` tests for this, so don't skip step 1.
+
+**3. Send the policy in report-only mode.** Nothing gets blocked, and browsers report what would have been. Set up a [`ReportHandler`](#collecting-reports), then print the policy with reporting added:
+
+```bash
+gencsp -pages 20 -report-to https://example.com/csp-reports https://example.com
+```
+
+Send the result in a `Content-Security-Policy-Report-Only` header. The endpoint can be on another origin, which is useful for a static site with nowhere to run a handler. For nonces, set `ReportOnly` and `ReportTo` on `NonceMiddleware`.
+
+If you're replacing a policy that's already enforced, keep sending it as it is, and send the new one alongside it. Browsers enforce the old one and report on the new one.
+
+**4. Collect reports for long enough to cover how the site gets used.** A day misses anything weekly, and a week misses anything monthly. Waiting costs nothing, since nothing is being blocked.
+
+**5. Review what `Tally.Suggest` returns, and repeat.**
+
+- Add the `Additions` you recognize, after checking each one. Reports can be forged.
+- Rewrite the code in `Blockers`.
+- For a script or inline code in `Warnings`, generate the policy again from a page that reaches it, using `Actions` if it's behind a login.
+
+Go back to step 3 with the new policy, and keep going until only noise is left.
+
+**6. Enforce it.** Send the same value in a `Content-Security-Policy` header. Keep `report-uri` in it, so that you hear about what it blocks from now on.
+
+Deploy the policy along with the page it was generated for. Under `hash`, a page with old code and a policy with new hashes blocks that code, so watch for caches serving one without the other.
+
+If something breaks, change the header back to `Content-Security-Policy-Report-Only`. That stops the blocking at once, except for `integrity` attributes, and you keep getting reports.
+
+**7. Keep it current.** Under `hash`, a policy has to change whenever a script or inline code does, so generate it and run `Apply` in your build. Under `nonce`, it only changes when the page starts using something new. Either way, keep watching the reports.
+
+Without response headers, steps 3 to 5 aren't available, because a `<meta>` tag has no report-only mode and can't report. Use `-meta` to check the page with the tag in force, try it on a preview of the site, and cover as many pages as you can with `-pages` and `Actions`, because nothing will tell you what it blocks in production.
 
 ### Library
 
