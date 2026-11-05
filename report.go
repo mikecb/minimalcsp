@@ -488,7 +488,9 @@ func (p *Policy) allows(directive, source string) bool {
 }
 
 // ParsePolicy reads a Content-Security-Policy header value. As in browsers,
-// only the first directive of each name counts, and names ignore case.
+// only the first directive of each name counts, and names ignore case. Its
+// Warnings list any sources that let an attacker get around the policy through
+// a host known to allow it.
 func ParsePolicy(header string) *Policy {
 	policy := &Policy{}
 	for part := range strings.SplitSeq(header, ";") {
@@ -501,6 +503,7 @@ func ParsePolicy(header string) *Policy {
 			policy.Directives = append(policy.Directives, Directive{name, fields[1:]})
 		}
 	}
+	policy.Warnings = bypassWarnings(policy.Directives)
 	return policy
 }
 

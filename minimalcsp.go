@@ -318,6 +318,7 @@ func Build(page *Page, opts Options) *Policy {
 		slices.Sort(sources[name])
 		policy.Directives = append(policy.Directives, Directive{name, sources[name]})
 	}
+	policy.Warnings = append(policy.Warnings, bypassWarnings(policy.Directives)...)
 	return policy
 }
 
