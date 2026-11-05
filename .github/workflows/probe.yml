@@ -5,17 +5,13 @@ permissions:
   contents: read
 jobs:
   probe:
-    name: Probe ${{ matrix.arm }} ${{ matrix.shard }}
+    name: Validate ${{ matrix.shard }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-        arm: [base, dtemp, otr]
-    env:
-      PROBE_ARM: ${{ matrix.arm }}
-      PROBE_TIMEOUT: 170s
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,52 +20,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
-      - name: Describe the runner
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP CPUs=$env:NUMBER_OF_PROCESSORS"
-          "Boot: $((Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')) Now: $((Get-Date).ToUniversalTime().ToString('o'))"
-          Get-Volume | Format-Table DriveLetter,SizeRemaining,Size -AutoSize | Out-String
-          (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
-          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AntivirusEnabled,AMRunningMode | Out-String
-          Get-MpPreference | Format-List DisableRealtimeMonitoring,ExclusionPath | Out-String
-          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Format-List AutoDetect,ProxyEnable,AutoConfigURL | Out-String
-          netsh winhttp show proxy
-      - name: Start the sampler
-        shell: pwsh
-        run: Start-Process pwsh -ArgumentList '-NoProfile','-File','scripts/probe-sampler.ps1',"$env:RUNNER_TEMP\samples.log" -WindowStyle Hidden
-      - name: Run the browser tests twice
-        shell: bash
-        continue-on-error: true
-        working-directory: browser
-        run: |
-          if [ "$PROBE_ARM" = dtemp ]; then
-            export TMP="$(cygpath -w "$RUNNER_TEMP")" TEMP="$(cygpath -w "$RUNNER_TEMP")"
-          fi
-          for i in 1 2; do
-            echo "pass $i $(date -u +%T)"
-            PROBE_TRACE="$RUNNER_TEMP/trace-$i.log" go test -count=1 -json -timeout 25m ./... > "$RUNNER_TEMP/test-$i.json" || echo "pass $i failed"
-          done
-      - name: Dump system events
-        if: always()
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $since = (Get-Date).AddMinutes(-45)
-          $logs = 'Microsoft-Windows-Windows Defender/Operational', 'Microsoft-Windows-WindowsUpdateClient/Operational', 'Setup', 'System'
-          foreach ($log in $logs) {
-            Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $since } -ErrorAction SilentlyContinue |
-              Sort-Object TimeCreated | ForEach-Object {
-                "$($_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss')) [$log] $($_.Id) $(($_.Message -split "`n")[0])"
-              } | Out-File -Append "$env:RUNNER_TEMP\events.log"
-          }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: probe-${{ matrix.arm }}-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/samples.log
-            ${{ runner.temp }}/events.log
-            ${{ runner.temp }}/trace-*.log
-            ${{ runner.temp }}/test-*.json
+      - run: bash scripts/check.sh
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+      - run: bash scripts/check.sh
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+      - run: bash scripts/check.sh
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
