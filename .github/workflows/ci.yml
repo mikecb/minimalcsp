@@ -32,13 +32,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
+      # Each Chrome gets a new profile in the temp directory, which on Windows
+      # defaults to C:. That's slow enough for page loads to pass their time
+      # limit, so use D: instead.
+      - if: runner.os == 'Windows'
+        run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - run: bash scripts/check.sh
-        env:
-          # Each Chrome gets a new profile in the temp directory. On Windows that
-          # defaults to C:, which is slow enough that page loads can pass their
-          # time limit, so use D: instead. Other systems ignore these variables.
-          TMP: ${{ runner.temp }}
-          TEMP: ${{ runner.temp }}
 
   race:
     name: Race detector
