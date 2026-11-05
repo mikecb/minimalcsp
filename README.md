@@ -83,7 +83,7 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 | `-no-verify` | Don't load the page again under the policy |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
 
-`go run ./cli <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
+`go run ./cmd/gencsp <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
 
 ### Choosing how to trust scripts
 
@@ -233,6 +233,16 @@ Changes reach `master` only through pull requests. To merge, the `CI passed` che
 
 Dependabot proposes dependency and action updates weekly.
 
+### Releasing
+
+The two modules have separate versions, and `browser` depends on the library, so the library goes first:
+
+1. Tag the library on `master` with a version like `v0.2.0`.
+2. In a pull request, update `browser/go.mod` to require that version.
+3. Once that's merged, tag `master` with `browser/v0.2.0`.
+
+A tag is permanent. The Go module proxy keeps every version it sees, even if the tag is later deleted, so a bad release can only be replaced by a newer one.
+
 ## License
 
-MIT. See [license.md](license.md).
+MIT. See [LICENSE](LICENSE).
