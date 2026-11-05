@@ -99,7 +99,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [x] Don't hash from reports, since they carry only a short sample of inline code
 - [x] Suggest additions to an existing policy, with evidence for each one
 
-## Phase 5: Any deployment
+## Phase 5: Any deployment (done)
 
 - [x] Add nonce middleware for Go servers
 - [x] Support `'strict-dynamic'`, and stop listing external scripts by URL by default
@@ -107,7 +107,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [x] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about what `<meta>` doesn't support
 - [x] Document a rollout path: report-only first, then enforce
 - [x] Warn about allowlisted hosts known to allow bypasses
-- [ ] Add setup examples for common servers and static hosts
+- [x] Add setup examples for common servers and static hosts
 
 ## Phase 6: CLI and CI check
 

@@ -206,7 +206,7 @@ Work through the output until the command exits with status 0. `blocked:` lines 
 gencsp -pages 20 -report-to https://example.com/csp-reports https://example.com
 ```
 
-Send the result in a `Content-Security-Policy-Report-Only` header. The endpoint can be on another origin, which is useful for a static site with nowhere to run a handler. For nonces, set `ReportOnly` and `ReportTo` on `NonceMiddleware`.
+Send the result in a `Content-Security-Policy-Report-Only` header. [Setting up a policy](docs/setup.md) shows how on common servers and static hosts. The endpoint can be on another origin, which is useful for a static site with nowhere to run a handler. For nonces, set `ReportOnly` and `ReportTo` on `NonceMiddleware`.
 
 If you're replacing a policy that's already enforced, keep sending it as it is, and send the new one alongside it. Browsers enforce the old one and report on the new one.
 
