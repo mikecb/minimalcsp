@@ -30,6 +30,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	scripts := flags.String("scripts", "hash", "how to trust scripts: hash for static sites, nonce for servers, or url to leave the page unchanged")
 	meta := flags.Bool("meta", false, "print a <meta> tag instead of a header value, for hosts that can't set headers")
+	reportTo := flags.String("report-to", "", "add reporting to this endpoint to the printed policy")
 	exactPaths := flags.Bool("exact-paths", false, "list resources by URL rather than by origin")
 	maxPages := flags.Int("pages", 1, "crawl up to this many pages on the same origin")
 	skipVerify := flags.Bool("no-verify", false, "don't check the page under the generated policy")
@@ -55,6 +56,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if *meta && *reportTo != "" {
+		fmt.Fprintln(stderr, "gencsp: -meta can't be used with -report-to, because browsers ignore reporting in a <meta> tag")
+		return 2
+	}
+
 	var collector browser.Collector
 	if *noSandbox {
 		collector.Options = append(collector.Options, chromedp.NoSandbox)
@@ -66,9 +72,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{Scripts: trust, ExactPaths: *exactPaths})
 
-	if *meta {
+	switch {
+	case *meta:
 		fmt.Fprintln(stdout, policy.MetaTag())
-	} else {
+	case *reportTo != "":
+		fmt.Fprintln(stdout, policy.ReportingTo(*reportTo))
+	default:
 		fmt.Fprintln(stdout, policy)
 	}
 	for _, warning := range policy.Warnings {
@@ -88,6 +97,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	if *meta {
 		fmt.Fprintln(stderr, "change: the tag goes at the start of <head>, after any <meta charset>, and replaces any tag already there")
+	}
+	if *reportTo != "" {
+		fmt.Fprintln(stderr, "change: send the policy in a Content-Security-Policy-Report-Only header to collect reports without blocking anything")
 	}
 	if *skipVerify {
 		return 0

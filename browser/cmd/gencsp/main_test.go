@@ -274,3 +274,35 @@ func TestMetaReplacesTagsInThePage(t *testing.T) {
 		t.Errorf("without -meta: exit %d, stderr = %q", code, stderr)
 	}
 }
+
+func TestReportTo(t *testing.T) {
+	var posts atomic.Int32
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports" {
+			posts.Add(1)
+			return
+		}
+		page(`<img src=/i.png><p onclick="go()">x</p>`)(w, r)
+	}
+	code, stdout, stderr := gencsp(t, handler, "-report-to", "/reports")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.HasSuffix(stdout, "; report-uri /reports\n") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "change: send the policy in a Content-Security-Policy-Report-Only") {
+		t.Errorf("stderr = %q", stderr)
+	}
+	// Checking a policy mustn't fill the site's real report log.
+	if posts.Load() != 0 {
+		t.Errorf("sent %d reports", posts.Load())
+	}
+}
+
+func TestReportToWithMeta(t *testing.T) {
+	code, _, stderr := gencsp(t, page(``), "-meta", "-report-to", "/reports")
+	if code != 2 || !strings.Contains(stderr, "can't be used") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+}

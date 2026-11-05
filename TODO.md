@@ -14,6 +14,8 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **External scripts:** servers use nonces, which have no limits. Static sites use hashes with `integrity` attributes, which Chrome 59, Firefox 116 and Safari 15.6 support. A hashed inline loader was the other option, and testing in Chrome ruled it out: scripts it loads miss `DOMContentLoaded` and run after later inline scripts, which breaks ordinary pages without any error. Scripts trusted by hash can't use `import`, because they're parser-inserted and nothing carries their trust to what they import, so those pages need nonces.
 - **Nonces:** these go in templates. A filter that adds them to responses would also nonce injected scripts, so the library deliberately doesn't offer one.
 - **`<meta>` policies:** the tag is checked enforced, because it has no report-only mode, so a page is tested the way it will really run. It goes after `<meta charset>`, which has to stay in the first 1024 bytes, and after `<head>`, since going above it loses the element's attributes. `Build` never emits the directives `<meta>` ignores, so the warning is about what the tag can't do, such as stopping framing. A tag doesn't suit nonces: a page with a server can set a header.
+- **Reports are untrusted:** anyone can send one, so a report never adds a source that can run code. Scripts need a hash, which reports don't have, and `base-uri`, `object-src` and `worker-src` could all let an attacker run code. These become warnings, and anything else is a suggestion for a person to review.
+- **Report delivery:** policies use `report-uri`, which the specification calls deprecated. Chrome ignores it when `report-to` is present, and `report-to` doesn't work on plain HTTP, so listing both loses every report on those pages. Testing in Chrome found this. Revisit if a browser drops `report-uri`.
 - **Default:** policies trust scripts by hash, even though that means changing the page, because a policy that lists URLs doesn't meet the first goal. Listing URLs is still available as an explicit choice.
 
 ## Open questions
@@ -86,15 +88,15 @@ This phase is what makes the "working" goal testable.
 
 Keep the static parser small. Don't add `srcset`, preload or CSS parsing, since the browser finds all of those.
 
-## Phase 4: Report-only collection
+## Phase 4: Report-only collection (done)
 
 This catches what a crawl misses: real users, real browsers and logged-in pages.
 
-- [ ] Add an `http.Handler` that receives `report-uri` and Reporting API reports
-- [ ] Build a policy from collected reports, keeping only violations that repeat
-- [ ] Filter out noise from browser extensions and injected scripts
-- [ ] Don't hash from reports, since they carry only a short sample of inline code
-- [ ] Suggest additions to an existing policy, with evidence for each one
+- [x] Add an `http.Handler` that receives `report-uri` and Reporting API reports
+- [x] Build a policy from collected reports, keeping only violations that repeat
+- [x] Filter out noise from browser extensions, other sites and one-off clients. Injected scripts can't be told apart, so they rely on the repeat count
+- [x] Don't hash from reports, since they carry only a short sample of inline code
+- [x] Suggest additions to an existing policy, with evidence for each one
 
 ## Phase 5: Any deployment
 
@@ -110,6 +112,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 
 - [x] Add a CLI that generates a policy and verifies it
 - [ ] Add a CLI command that verifies an existing policy
+- [ ] Add a CLI command that reads stored reports and prints suggestions
 - [ ] Merge the two CLIs, so one command works with or without a browser
 - [ ] Add a CI check that fails when a page needs something the policy doesn't allow
 - [ ] Have the CI check fail on new blockers too
