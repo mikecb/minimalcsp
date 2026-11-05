@@ -25,6 +25,7 @@ const (
 	ReasonEventHandler   = "inline event handler"
 	ReasonStyleAttribute = "style attribute"
 	ReasonJavaScriptURL  = "javascript: URL"
+	ReasonEval           = "eval"
 )
 
 // Finding is something a page needs its policy to allow. It holds either a
@@ -39,15 +40,21 @@ type Finding struct {
 // allowed by hash, so the page has to change.
 type Blocker struct {
 	Reason  string // One of the Reason constants.
-	Element string // The element's tag name.
-	Attr    string // The attribute's name.
-	Value   string // The attribute's value.
+	Element string // The element's tag name, if there is one.
+	Attr    string // The attribute's name, if known.
+	Value   string // The code.
 }
 
 func (b Blocker) String() string {
 	value := b.Value
 	if r := []rune(value); len(r) > 60 {
 		value = string(r[:60]) + "..."
+	}
+	switch {
+	case b.Element == "":
+		return fmt.Sprintf("%s: %q", b.Reason, value)
+	case b.Attr == "":
+		return fmt.Sprintf("%s: <%s> %q", b.Reason, b.Element, value)
 	}
 	return fmt.Sprintf("%s: <%s %s=%q>", b.Reason, b.Element, b.Attr, value)
 }
@@ -58,6 +65,33 @@ type Page struct {
 	Findings []Finding
 	Blockers []Blocker
 	Warnings []string
+	Links    []*url.URL // Absolute http and https links, for crawling.
+
+	// Incomplete reports that the page may need resources the collector
+	// couldn't see.
+	Incomplete bool
+}
+
+// Merge combines pages from one origin, so that a policy built from the result
+// works on all of them. It returns nil if there are no pages. 'self' in the
+// resulting policy means the origin of the first page.
+func Merge(pages ...*Page) *Page {
+	if len(pages) == 0 {
+		return nil
+	}
+	merged := &Page{URL: pages[0].URL}
+	for _, page := range pages {
+		merged.Findings = append(merged.Findings, page.Findings...)
+		merged.Blockers = append(merged.Blockers, page.Blockers...)
+		merged.Links = append(merged.Links, page.Links...)
+		merged.Incomplete = merged.Incomplete || page.Incomplete
+		for _, warning := range page.Warnings {
+			if !slices.Contains(merged.Warnings, warning) {
+				merged.Warnings = append(merged.Warnings, warning)
+			}
+		}
+	}
+	return merged
 }
 
 // Collector gathers what a page needs. Implementations differ in what they can
@@ -99,7 +133,12 @@ func (p *Policy) String() string {
 // Build returns the tightest policy that allows everything in page. It denies
 // by default, and its output doesn't depend on the order of the findings.
 func Build(page *Page, opts Options) *Policy {
-	policy := &Policy{Warnings: slices.Clone(page.Warnings)}
+	policy := &Policy{}
+	if page.Incomplete {
+		policy.Warnings = append(policy.Warnings,
+			"static analysis can't see what this page's scripts and stylesheets load, such as fonts and API requests")
+	}
+	policy.Warnings = append(policy.Warnings, page.Warnings...)
 	for _, b := range page.Blockers {
 		if !slices.Contains(policy.Blockers, b) {
 			policy.Blockers = append(policy.Blockers, b)

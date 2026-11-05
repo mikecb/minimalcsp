@@ -14,7 +14,8 @@ import (
 )
 
 // StaticCollector fetches a page and reads its HTML without running it, so it
-// can't see anything the page loads later. Parse warns when that matters.
+// can't see anything the page loads later. Parse marks the page Incomplete when
+// that matters.
 type StaticCollector struct {
 	Client *http.Client // Defaults to http.DefaultClient.
 }
@@ -62,18 +63,13 @@ func Parse(r io.Reader, pageURL *url.URL) (*Page, error) {
 	p := &parser{page: &Page{URL: pageURL}, base: pageURL}
 	p.findBase(doc)
 	p.walk(doc)
-	if p.loadsMore {
-		p.page.Warnings = append(p.page.Warnings,
-			"static analysis can't see what this page's scripts and stylesheets load, such as fonts and API requests")
-	}
 	return p.page, nil
 }
 
 // parser holds the state of one Parse call.
 type parser struct {
-	page      *Page
-	base      *url.URL // What relative URLs resolve against.
-	loadsMore bool     // Whether the page has external scripts or stylesheets.
+	page *Page
+	base *url.URL // What relative URLs resolve against.
 }
 
 // findBase applies the first <base href>, which browsers use for the whole document.
@@ -145,6 +141,24 @@ func (p *parser) element(n *html.Node) {
 		}
 	case "button", "input":
 		p.addURL(n, "formaction", "form-action")
+	case "a", "area":
+		p.addLink(n)
+	case "meta":
+		if equiv, _ := attr(n, "http-equiv"); strings.EqualFold(equiv, "content-security-policy") {
+			p.page.Warnings = append(p.page.Warnings,
+				"this page sets a policy in a <meta> tag, which can hide what it would otherwise load")
+		}
+	}
+}
+
+// addLink records where n leads, if it's a page that could be crawled.
+func (p *parser) addLink(n *html.Node) {
+	href, ok := attr(n, "href")
+	if !ok {
+		return
+	}
+	if u := p.resolve(href); u != nil && (u.Scheme == "http" || u.Scheme == "https") {
+		p.page.Links = append(p.page.Links, u)
 	}
 }
 
@@ -154,7 +168,7 @@ func (p *parser) link(n *html.Node) {
 		switch token {
 		case "stylesheet":
 			p.addURL(n, "href", "style-src")
-			p.loadsMore = true
+			p.page.Incomplete = true
 		case "icon":
 			p.addURL(n, "href", "img-src")
 		}
@@ -164,7 +178,7 @@ func (p *parser) link(n *html.Node) {
 func (p *parser) script(n *html.Node) {
 	if _, ok := attr(n, "src"); ok {
 		p.addURL(n, "src", "script-src")
-		p.loadsMore = true
+		p.page.Incomplete = true
 		return
 	}
 	scriptType, _ := attr(n, "type")

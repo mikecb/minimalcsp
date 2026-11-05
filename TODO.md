@@ -9,11 +9,11 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **Inline code:** hashes and nonces only. minimalcsp never emits `'unsafe-inline'`, including as a fallback for old browsers.
 - **Inline event handlers and `style` attributes:** these can't be hashed without `'unsafe-hashes'`, so that stays off, and each one is reported as a blocker for the site to fix.
 - **Audience:** a Go library first. The CLI and CI check are thin layers on top of it.
+- **Browser dependency:** the headless collector lives in its own module, built on chromedp, so that library users don't depend on it.
 
 ## Open questions
 
 - **External scripts on static sites:** with no server to issue nonces, how do they load without a URL allowlist? The proposal is a hashed inline loader with `'strict-dynamic'`. The alternative is hashing external scripts through `integrity` attributes where browsers support it. Until this is settled, they're listed by exact URL with a warning, because `'strict-dynamic'` makes browsers ignore URLs.
-- **Browser dependency:** should the headless collector live in its own module, so that library users who don't need it avoid the dependency?
 
 ## Phase 1: Fix known bugs (done)
 
@@ -67,17 +67,17 @@ Valid output:
 - [x] Use `frame-src` for iframes
 - [x] Check output against the CSP grammar in tests
 
-## Phase 3: Headless browser
+## Phase 3: Headless browser (done)
 
 This phase is what makes the "working" goal testable.
 
-- [ ] Choose a browser driver, such as chromedp, and settle the browser dependency question
-- [ ] Load pages under a deny-all report-only policy and collect violations
-- [ ] Collect network requests, including `connect-src` and `font-src` resources
-- [ ] Hash the inline code the browser actually ran
-- [ ] Verify a generated policy by loading the page with it and failing on any violation
-- [ ] Crawl multiple pages of a site and merge the results
-- [ ] Add optional scripted interactions, so resources behind clicks and logins are found
+- [x] Choose a browser driver, such as chromedp, and settle the browser dependency question
+- [x] Load pages under a deny-all report-only policy and collect violations
+- [x] Collect network requests, including `connect-src` and `font-src` resources
+- [x] Hash the inline code the browser actually ran
+- [x] Verify a generated policy by loading the page with it and failing on any violation
+- [x] Crawl multiple pages of a site and merge the results
+- [x] Add optional scripted interactions, so resources behind clicks and logins are found
 
 Keep the static parser small. Don't add `srcset`, preload or CSS parsing, since the browser finds all of those.
 
@@ -102,7 +102,9 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 
 ## Phase 6: CLI and CI check
 
-- [ ] Add CLI commands to generate a policy and to verify one
+- [x] Add a CLI that generates a policy and verifies it
+- [ ] Add a CLI command that verifies an existing policy
+- [ ] Merge the two CLIs, so one command works with or without a browser
 - [ ] Add a CI check that fails when a page needs something the policy doesn't allow
 - [ ] Have the CI check fail on new blockers too
 - [ ] Publish a GitHub Action for the CI check
@@ -118,4 +120,4 @@ These can happen at any time.
 - [x] Remove the `canvas` and `figure` branches, since those elements have no `src`
 - [x] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP
 - [ ] Rename `cli/` to `cmd/gencsp/` so `go install` produces a `gencsp` binary
-- [ ] Set up tagged releases once phase 2 is done
+- [ ] Set up tagged releases, which the `browser` module needs before anyone can use it from outside this repository
