@@ -176,7 +176,7 @@ type Policy struct {
 func (p *Policy) String() string {
 	parts := make([]string, len(p.Directives))
 	for i, d := range p.Directives {
-		parts[i] = d.Name + " " + strings.Join(d.Sources, " ")
+		parts[i] = strings.Join(append([]string{d.Name}, d.Sources...), " ")
 	}
 	return strings.Join(parts, "; ")
 }

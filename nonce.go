@@ -19,6 +19,10 @@ type NonceMiddleware struct {
 
 	// ReportOnly sends the policy without enforcing it, for trying it out.
 	ReportOnly bool
+
+	// ReportTo is where browsers send violations, such as a ReportHandler's
+	// path. Leave it empty to not collect them.
+	ReportTo string
 }
 
 // Wrap returns a handler that adds the policy to next's responses.
@@ -27,12 +31,16 @@ func (m NonceMiddleware) Wrap(next http.Handler) http.Handler {
 	if m.ReportOnly {
 		header += "-Report-Only"
 	}
+	policy := m.Policy
+	if m.ReportTo != "" {
+		policy = policy.ReportingTo(m.ReportTo)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 128 bits is the minimum the CSP specification recommends.
 		var random [16]byte
 		rand.Read(random[:])
 		nonce := base64.StdEncoding.EncodeToString(random[:])
-		w.Header().Set(header, m.Policy.WithNonce(nonce))
+		w.Header().Set(header, policy.WithNonce(nonce))
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nonceKey{}, nonce)))
 	})
 }

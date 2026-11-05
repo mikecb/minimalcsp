@@ -26,7 +26,7 @@ The [roadmap](TODO.md) tracks what's left.
 
 | Area | Approach | Status |
 |---|---|---|
-| Finding resources | A headless browser, plus report-only collection from real traffic | Headless browser and HTML parsing built |
+| Finding resources | A headless browser, plus report-only collection from real traffic | Built, along with HTML parsing |
 | Checking policies | Load the page under the policy in report-only mode | Built |
 | Inline code | Hashes and nonces only, never `'unsafe-inline'` | Hashes built |
 | Scripts | Trusted by hash or nonce with `'strict-dynamic'`, not URL allowlists | Built, with URLs as an explicit option |
@@ -78,6 +78,7 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 | `-scripts mode` | How to trust scripts: `hash`, `nonce` or `url`. See [Choosing how to trust scripts](#choosing-how-to-trust-scripts) |
 | `-meta` | Print a `<meta>` tag instead of a header value, and check the page under that tag. See [Hosts that can't set headers](#hosts-that-cant-set-headers) |
 | `-pages n` | Crawl up to `n` pages on the same origin, and build one policy for all of them |
+| `-report-to url` | Add reporting to this endpoint to the printed policy. See [Collecting reports](#collecting-reports) |
 | `-exact-paths` | List resources by URL rather than by origin, which is tighter but needs regenerating whenever a resource moves |
 | `-no-verify` | Don't load the page again under the policy |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
@@ -135,6 +136,45 @@ Each response gets a new nonce. Templates add it with `minimalcsp.Nonce(r.Contex
 Put nonces in your templates, not in a filter that rewrites responses. A filter would give a nonce to every script in the page, including one an attacker managed to inject, which defeats the policy. Don't cache pages that use nonces.
 
 For other servers, `-scripts nonce` prints the policy with `{nonce}` where each response's nonce goes.
+
+### Collecting reports
+
+A crawl only sees what happened during that run. Real visitors reach pages a crawl can't, in browsers it doesn't use. To learn what they need, send your policy in report-only mode and collect what browsers report:
+
+```go
+tally := &minimalcsp.Tally{Site: siteURL}
+mux.Handle("/csp-reports", minimalcsp.ReportHandler{Receive: tally.Add})
+
+// Send this in a Content-Security-Policy-Report-Only header.
+header := policy.ReportingTo("/csp-reports").String()
+```
+
+For nonces, set `ReportOnly` and `ReportTo` on `NonceMiddleware` instead. On the command line, `-report-to /csp-reports` prints the policy with reporting added.
+
+Then ask what the policy is missing:
+
+```go
+suggestions := tally.Suggest(policy)
+for _, addition := range suggestions.Additions {
+	log.Println(addition) // img-src https://cdn.example: 8 reports from 5 clients, such as ...
+}
+```
+
+`Additions` are sources to review and add, `Blockers` are inline code that has to change, and `Warnings` are anything that needs a person. To regenerate a policy, pass `tally.Page()` to `minimalcsp.Merge` along with what a collector found, then to `Build`. If you only have a policy as text, `minimalcsp.ParsePolicy` reads it.
+
+A `Tally` only counts something once `MinClients` different clients report it, which defaults to 3. It ignores anything from a browser extension, and anything from a page outside `Site`. Behind a proxy, set `ClientID` on the handler, or every report seems to come from the proxy and nothing ever counts.
+
+**Reports aren't authenticated, so anyone can send one.** With enough addresses, someone can make anything repeat. To limit what that can do:
+
+- A report never adds a source that can run code: `script-src`, `worker-src`, `object-src` or `base-uri`. Those become warnings. A script needs its hash anyway, which a report doesn't carry, so collect the page again.
+- Inline code never gets hashed from a report, because a report only has its first 40 characters.
+- Blocked URLs are checked before they can reach a policy, so a forged one can't add directives.
+
+Other sources can still be forged, and one an attacker added could let them send data out. Review additions before you deploy them, and rate-limit the endpoint.
+
+Reports can hold private data, so query strings are dropped, and clients are stored as a hash that changes on restart. Samples of inline code are kept. A `Tally` is kept in memory, so to keep reports past a restart or combine servers, store them from `Receive` and pass them to `Add` later.
+
+`ReportingTo` uses `report-uri`, not the newer `report-to`. Chrome ignores `report-uri` when both are present, and `report-to` doesn't work on plain HTTP, so listing both loses every report from those pages. `ReportHandler` accepts both formats, so a site already using the Reporting API can point it there.
 
 ### Library
 
