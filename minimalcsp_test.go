@@ -543,3 +543,123 @@ func TestCollectFails(t *testing.T) {
 		})
 	}
 }
+
+func TestBlockerStringWithoutDetails(t *testing.T) {
+	tests := []struct {
+		blocker minimalcsp.Blocker
+		want    string
+	}{
+		{minimalcsp.Blocker{Reason: minimalcsp.ReasonEval, Value: "1+1"}, `eval: "1+1"`},
+		{minimalcsp.Blocker{Reason: minimalcsp.ReasonEventHandler, Element: "p", Value: "go()"}, `inline event handler: <p> "go()"`},
+	}
+	for _, tt := range tests {
+		if got := tt.blocker.String(); got != tt.want {
+			t.Errorf("got %q, want %q", got, tt.want)
+		}
+	}
+}
+
+func TestLinks(t *testing.T) {
+	page := parseAt(t, testURL, `
+		<a href="other.html">relative</a>
+		<a href="/root#section">with fragment</a>
+		<area href="https://y.test/map">
+		<a href="mailto:a@x.test">not a page</a>
+		<a href="javascript:go()">not a page</a>
+		<a>no href</a>
+		<link rel="stylesheet" href="a.css">`)
+	var got []string
+	for _, link := range page.Links {
+		got = append(got, link.String())
+	}
+	want := []string{"https://x.test/dir/other.html", "https://x.test/root#section", "https://y.test/map"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestIncomplete(t *testing.T) {
+	const warning = "static analysis can't see"
+	tests := []struct {
+		name, input string
+		want        bool
+	}{
+		{"plain page", `<p>hello`, false},
+		{"image and inline code", `<img src="i.png"><script>x()</script><style>p{}</style>`, false},
+		{"external script", `<script src="a.js"></script>`, true},
+		{"stylesheet", `<link rel="stylesheet" href="a.css">`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page := parseAt(t, testURL, tt.input)
+			if page.Incomplete != tt.want {
+				t.Errorf("Incomplete = %v, want %v", page.Incomplete, tt.want)
+			}
+			warned := slices.ContainsFunc(minimalcsp.Build(page, minimalcsp.Options{}).Warnings, func(w string) bool {
+				return strings.Contains(w, warning)
+			})
+			if warned != tt.want {
+				t.Errorf("warned = %v, want %v", warned, tt.want)
+			}
+		})
+	}
+}
+
+func TestMetaPolicyWarning(t *testing.T) {
+	for input, want := range map[string]bool{
+		`<meta http-equiv="Content-Security-Policy" content="default-src 'none'">`: true,
+		`<meta http-equiv="content-security-policy" content="default-src 'none'">`: true,
+		`<meta http-equiv="refresh" content="0">`:                                  false,
+		`<meta name="viewport" content="width=device-width">`:                      false,
+	} {
+		page := parseAt(t, testURL, input)
+		if got := len(page.Warnings) == 1; got != want {
+			t.Errorf("%s: warnings = %q", input, page.Warnings)
+		}
+	}
+}
+
+func TestMerge(t *testing.T) {
+	one := parseAt(t, "https://x.test/one", `<img src="/a.png"><p onclick="a()"><a href="/two">two</a>`)
+	two := parseAt(t, "https://x.test/two", `<img src="https://cdn.test/b.png"><p onclick="b()"><a href="/one">one</a>`)
+	one.Warnings = []string{"shared", "first"}
+	two.Warnings = []string{"shared", "second"}
+
+	merged := minimalcsp.Merge(one, two)
+	if merged.URL != one.URL {
+		t.Errorf("URL = %v, want the first page's", merged.URL)
+	}
+	if got, want := len(merged.Links), 2; got != want {
+		t.Errorf("got %d links, want %d", got, want)
+	}
+	if got, want := merged.Warnings, []string{"shared", "first", "second"}; !slices.Equal(got, want) {
+		t.Errorf("warnings = %v, want %v", got, want)
+	}
+	if merged.Incomplete {
+		t.Error("neither page is incomplete")
+	}
+
+	policy := minimalcsp.Build(merged, minimalcsp.Options{})
+	if got, want := policy.String(), baseline+"; img-src 'self' https://cdn.test"; got != want {
+		t.Errorf("policy = %q, want %q", got, want)
+	}
+	if got := len(policy.Blockers); got != 2 {
+		t.Errorf("got %d blockers, want 2", got)
+	}
+}
+
+func TestMergeIsIncompleteIfAnyPageIs(t *testing.T) {
+	complete := parseAt(t, testURL, `<p>`)
+	incomplete := parseAt(t, testURL, `<script src="a.js"></script>`)
+	for _, pages := range [][]*minimalcsp.Page{{complete, incomplete}, {incomplete, complete}} {
+		if !minimalcsp.Merge(pages...).Incomplete {
+			t.Error("expected Incomplete")
+		}
+	}
+}
+
+func TestMergeNothing(t *testing.T) {
+	if got := minimalcsp.Merge(); got != nil {
+		t.Errorf("got %+v, want nil", got)
+	}
+}

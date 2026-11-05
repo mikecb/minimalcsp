@@ -19,7 +19,7 @@ jobs:
   check:
     name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -31,12 +31,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
       - run: bash scripts/check.sh
 
   race:
     name: Race detector
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +45,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
       - run: go test -race -count=1 ./...
+      - run: go test -race -count=1 ./...
+        working-directory: browser
 
   vulnerabilities:
     name: Vulnerabilities
@@ -57,7 +61,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        working-directory: browser
 
   # The merge gate requires only this job, so jobs can change without touching
   # the gate. It runs even after a failure, because GitHub treats a skipped

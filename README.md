@@ -4,7 +4,7 @@
 
 Generate the minimal working Content Security Policy (CSP) for a given webpage.
 
-> **Status: early.** minimalcsp generates valid, strict policies, but so far it reads only a page's HTML. Policies deny by default, so anything it can't see gets blocked. Try a policy with `Content-Security-Policy-Report-Only` before enforcing it. See the [roadmap](TODO.md).
+> **Status: early.** minimalcsp runs a page in headless Chrome, generates a strict policy, and checks the page under that policy. Policies deny by default, so anything a run doesn't reach gets blocked, such as a page behind a login. Try a policy with `Content-Security-Policy-Report-Only` before enforcing it. See the [roadmap](TODO.md).
 
 ## Why
 
@@ -26,63 +26,90 @@ The [roadmap](TODO.md) tracks what's left.
 
 | Area | Approach | Status |
 |---|---|---|
-| Finding resources | A headless browser, plus report-only collection from real traffic | HTML parsing only so far |
+| Finding resources | A headless browser, plus report-only collection from real traffic | Headless browser and HTML parsing built |
+| Checking policies | Load the page under the policy in report-only mode | Built |
 | Inline code | Hashes and nonces only, never `'unsafe-inline'` | Hashes built |
 | Scripts | Trusted by hash or nonce with `'strict-dynamic'`, not URL allowlists | Listed by exact URL with a warning for now |
 | Other resources | Origins by default, with exact paths as an option | Built |
 | Static sites | Hashes, delivered in a header or a `<meta>` tag | Header value built |
 | Dynamic servers | Nonces, with middleware for Go servers | Planned |
-| Unfixable inline code | Event handlers, `style` attributes and `javascript:` URLs are reported for the site to fix | Built |
-| Interfaces | A Go library first, with a CLI and CI check built on it | Library and basic CLI built |
+| Unfixable inline code | Event handlers, `style` attributes, `javascript:` URLs and `eval` are reported for the site to fix | Built |
+| Interfaces | A Go library first, with a CLI and CI check built on it | Library and CLIs built |
 
 ## Usage
 
-Requires Go 1.27.3 or later.
+Requires Go 1.27.3 or later. The browser collector also needs Chrome or Chromium.
+
+The repository has two Go modules, so that users of the library don't depend on a browser driver:
+
+| Module | Contains |
+|---|---|
+| `github.com/mikecb/minimalcsp` | The library, an HTML-only collector and a small CLI |
+| `github.com/mikecb/minimalcsp/browser` | The headless Chrome collector and its CLI |
 
 ### Command line
 
 ```bash
-go run ./cli https://example.com
+go -C browser run ./cmd/gencsp https://example.com
 ```
 
-This fetches the page and prints a policy on stdout:
+This runs the page in headless Chrome and prints a policy on stdout:
 
 ```text
 default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src data:; script-src https://example.com/s.js; style-src 'sha256-zQhcS0BkpPhIWxF5sE2D1PEgBIvlKsPn21RDpgKhXxM='
 ```
 
-Anything you should know before deploying it goes to stderr:
+It then loads the page again under that policy. Anything you should know goes to stderr:
 
 ```text
-warning: static analysis can't see what this page's scripts and stylesheets load, such as fonts and API requests
 warning: script-src allows https://example.com/s.js by URL, which is weaker than a hash or nonce
+blocked: inline event handler: <p onclick="go()">
+violation: https://example.com/: img-src blocked https://example.com/late.png
 ```
 
-Lines starting with `blocked:` show inline code that the policy blocks and that has to change. To list resources by URL rather than by origin, add `-exact-paths`, which is tighter but needs regenerating whenever a resource moves.
+- `warning:` lines are weaknesses in the policy, or gaps in what was seen.
+- `blocked:` lines are inline code that the policy blocks and that has to change.
+- `violation:` lines are anything else the page did that the policy didn't allow. Any of these make the command exit with status 1.
+
+| Flag | Effect |
+|---|---|
+| `-pages n` | Crawl up to `n` pages on the same origin, and build one policy for all of them |
+| `-exact-paths` | List resources by URL rather than by origin, which is tighter but needs regenerating whenever a resource moves |
+| `-no-verify` | Don't load the page again under the policy |
+| `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
+
+`go run ./cli <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so.
 
 ### Library
 
 ```go
-page, err := minimalcsp.StaticCollector{}.Collect(ctx, "https://example.com")
+collector := browser.Collector{}
+page, err := collector.Collect(ctx, "https://example.com")
 if err != nil {
 	return err
 }
 policy := minimalcsp.Build(page, minimalcsp.Options{})
 
-w.Header().Set("Content-Security-Policy-Report-Only", policy.String())
-for _, blocker := range policy.Blockers {
-	log.Println(blocker)
+violations, err := collector.Verify(ctx, policy.String(), "https://example.com")
+if err != nil {
+	return err
+}
+for _, violation := range violations {
+	log.Println(violation)
 }
 ```
 
-If you already have the HTML, use `minimalcsp.Parse` instead of a collector.
+Use `collector.Crawl` with `minimalcsp.Merge` to cover several pages. To reach resources behind a click or a login, set `collector.Actions` to [chromedp](https://github.com/chromedp/chromedp) actions, which run on each page after it loads.
+
+Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have the HTML, `minimalcsp.Parse`. `browser` needs a tagged release of the library before it can be used from another module.
 
 ## Limitations
 
-- It can't see anything loaded after the HTML, such as fonts referenced from CSS or requests made by scripts. Policies block these until the browser collector in [phase 3](TODO.md#phase-3-headless-browser) can find them.
-- Hashes match a page's exact inline code, so any change to it means generating a new policy.
+- A run only sees what the page does during that run. Add `Actions` to reach resources behind interaction, and try the policy in report-only mode with real traffic.
+- Hashes match a page's exact inline code, so any change to it means generating a new policy. A page whose inline code differs on every load can't have a working hash-based policy, and verifying shows this.
 - External scripts are allowed by URL, which isn't as strong as a hash or nonce.
-- Each policy covers one page. Other pages on the same site may need more.
+- Code in closed shadow roots, and code that a script rewrites after it runs, can't be captured. Each case gets a warning.
+- To collect a site on a private network, turn off Chrome's `LocalNetworkAccessChecks` feature in `Options`. Otherwise Chrome blocks what the page loads, which shows up as warnings. Loopback addresses aren't affected.
 
 ## Development
 
@@ -92,7 +119,7 @@ Before opening a pull request, run the same checks CI runs:
 bash scripts/check.sh
 ```
 
-This checks formatting, `go.mod`, `go vet`, the build and the tests, and fails if coverage drops below 95%.
+This checks formatting, `go.mod`, `go vet`, the build and the tests for both modules, and fails if coverage drops below 95% for the library or 85% for the browser module. The browser tests skip themselves without Chrome, except in CI.
 
 Changes reach `master` only through pull requests. To merge, the `CI passed` check must succeed on a branch that's up to date with `master`, and every review thread must be resolved. That check covers:
 
