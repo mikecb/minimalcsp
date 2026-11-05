@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/chromedp/cdproto v0.159.1
 	github.com/chromedp/chromedp v0.22.1
-	github.com/mikecb/minimalcsp v0.1.0
+	github.com/mikecb/minimalcsp v0.2.0
 	golang.org/x/net v0.62.0
 )
 
