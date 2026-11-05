@@ -1,6 +1,12 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
+# gofmt rejects CRLF, and bash can't run scripts that use it.
+*.go text eol=lf
+*.sh text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
 # Custom for Visual Studio
 *.cs     diff=csharp
 

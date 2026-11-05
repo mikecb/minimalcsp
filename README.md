@@ -1,5 +1,7 @@
 # minimalcsp
 
+[![CI](https://github.com/mikecb/minimalcsp/actions/workflows/ci.yml/badge.svg)](https://github.com/mikecb/minimalcsp/actions/workflows/ci.yml)
+
 Generate the minimal working Content Security Policy (CSP) for a given webpage.
 
 > **Status: early.** minimalcsp generates valid, strict policies, but so far it reads only a page's HTML. Policies deny by default, so anything it can't see gets blocked. Try a policy with `Content-Security-Policy-Report-Only` before enforcing it. See the [roadmap](TODO.md).
@@ -84,9 +86,21 @@ If you already have the HTML, use `minimalcsp.Parse` instead of a collector.
 
 ## Development
 
+Before opening a pull request, run the same checks CI runs:
+
 ```bash
-go test ./...
+bash scripts/check.sh
 ```
+
+This checks formatting, `go.mod`, `go vet`, the build and the tests, and fails if coverage drops below 95%.
+
+Changes reach `master` only through pull requests. To merge, the `CI passed` check must succeed on a branch that's up to date with `master`, and every review thread must be resolved. That check covers:
+
+- `scripts/check.sh` on Linux, Windows and macOS
+- The race detector
+- `govulncheck`, which also runs weekly
+
+Dependabot proposes dependency and action updates weekly.
 
 ## License
 
