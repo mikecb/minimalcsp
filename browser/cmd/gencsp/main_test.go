@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mikecb/minimalcsp"
@@ -223,5 +224,53 @@ func TestHintsAtNonces(t *testing.T) {
 	}
 	if code, _, stderr := gencsp(t, scriptPage(`if (!window.again) { window.again = 1; import("/b.js") }`), "-scripts", "nonce"); code != 0 {
 		t.Errorf("nonce: exit %d, stderr = %q", code, stderr)
+	}
+}
+
+func TestMeta(t *testing.T) {
+	code, stdout, stderr := gencsp(t, scriptPage(`window.a = 1`), "-meta")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, `<meta http-equiv="Content-Security-Policy" content="default-src 'none';`) || !strings.HasSuffix(stdout, "\">\n") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "change: the tag goes") || !strings.Contains(stderr, "warning: a <meta> policy") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestMetaIsVerified(t *testing.T) {
+	code, _, stderr := gencsp(t, func() http.HandlerFunc {
+		var calls atomic.Int32
+		return func(w http.ResponseWriter, r *http.Request) {
+			// A script that only appears on the second load isn't in the policy.
+			if r.URL.Path == "/" && calls.Add(1) > 1 {
+				fmt.Fprint(w, prefix+`<script>window.late = 1</script>`)
+				return
+			}
+			page(``)(w, r)
+		}
+	}(), "-meta")
+	if code != 1 || !strings.Contains(stderr, "violation: ") || !strings.Contains(stderr, "window.late") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+}
+
+func TestMetaWithNonce(t *testing.T) {
+	code, _, stderr := gencsp(t, page(``), "-meta", "-scripts", "nonce")
+	if code != 2 || !strings.Contains(stderr, "can't be used") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+}
+
+// A stale tag stays in force under a header, but -meta replaces it.
+func TestMetaReplacesTagsInThePage(t *testing.T) {
+	const body = `<meta http-equiv=Content-Security-Policy content="img-src 'none'"><img src=/i.png>`
+	if code, _, stderr := gencsp(t, page(body), "-meta"); code != 0 {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+	if code, _, stderr := gencsp(t, page(body)); code != 1 {
+		t.Errorf("without -meta: exit %d, stderr = %q", code, stderr)
 	}
 }
