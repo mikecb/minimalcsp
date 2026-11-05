@@ -104,7 +104,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [x] Support `'strict-dynamic'`, and stop listing external scripts by URL by default
 - [x] Hash external scripts, and add the `integrity` attributes they need
 - [x] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about what `<meta>` doesn't support
-- [ ] Document a rollout path: report-only first, then enforce
+- [x] Document a rollout path: report-only first, then enforce
 - [ ] Warn about allowlisted hosts known to allow bypasses
 - [ ] Add setup examples for common servers and static hosts
 
