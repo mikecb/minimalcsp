@@ -111,7 +111,9 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 
 These can happen at any time.
 
-- [ ] Add CI that runs `go build`, `go vet` and `go test`
+- [x] Add CI on Linux, Windows and macOS, with a local check script
+- [x] Add merge gates on `master`
+- [x] Add Dependabot for dependencies and actions
 - [x] Replace the deprecated `io/ioutil`
 - [x] Remove the `canvas` and `figure` branches, since those elements have no `src`
 - [x] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP
