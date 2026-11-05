@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -92,6 +93,20 @@ var recorderScript = fmt.Sprintf(`(() => {
 		}
 	});
 })();`, binding, flushEvent)
+
+// probe appends one timing line to the file named by PROBE_TRACE.
+func probe(what string, since time.Time, detail string) {
+	name := os.Getenv("PROBE_TRACE")
+	if name == "" {
+		return
+	}
+	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s pid=%d %s %.3fs %s\n", time.Now().UTC().Format("15:04:05.000"), os.Getpid(), what, time.Since(since).Seconds(), detail)
+}
 
 // Collector loads pages in headless Chrome. The zero value is ready to use.
 type Collector struct {
@@ -270,15 +285,20 @@ func (c Collector) start(ctx context.Context) (context.Context, context.CancelFu
 	allocator, stopAllocator := chromedp.NewExecAllocator(ctx, opts...)
 	browser, stopBrowser := chromedp.NewContext(allocator)
 	stop := func() {
+		began := time.Now()
 		stopBrowser()
 		stopAllocator()
+		probe("stop", began, "")
 	}
+	began := time.Now()
 	// The browser must start on a context with no per-page timeout, because
 	// the context of the first run decides how long the browser lives.
 	if err := chromedp.Do(browser); err != nil {
 		stop()
+		probe("start-failed", began, err.Error())
 		return nil, nil, fmt.Errorf("starting Chrome: %w", err)
 	}
+	probe("start", began, "")
 	return browser, stop, nil
 }
 
@@ -672,14 +692,28 @@ func replaceHeaders(headers []*fetch.HeaderEntry, policy string) []*fetch.Header
 // load opens pageURL in a new tab under policy and records what happens.
 func (c Collector) load(browser context.Context, pageURL, policy string, rewrite rewriter) (*loadResult, error) {
 	timeout := cmp.Or(c.Timeout, 30*time.Second)
+	if c.Timeout == 0 && os.Getenv("PROBE_TIMEOUT") != "" {
+		timeout, _ = time.ParseDuration(os.Getenv("PROBE_TIMEOUT"))
+	}
 	limited, cancel := context.WithTimeout(browser, timeout)
 	defer cancel()
 	ctx, closeTab := chromedp.NewContext(limited)
-	defer closeTab()
+	defer func() {
+		began := time.Now()
+		closeTab()
+		probe("closetab", began, "")
+	}()
+	loadBegan, step := time.Now(), time.Now()
+	lap := func(what string) {
+		probe(what, step, "")
+		step = time.Now()
+	}
+	defer func() { probe("load-total", loadBegan, pageURL) }()
 
 	if err := chromedp.Do(ctx); err != nil {
 		return nil, err
 	}
+	lap("newtab")
 	tree, err := chromedp.Call(ctx, page.GetFrameTree, cdp.Empty{})
 	if err != nil {
 		return nil, err
@@ -699,10 +733,13 @@ func (c Collector) load(browser context.Context, pageURL, policy string, rewrite
 	if err := prepare(ctx); err != nil {
 		return nil, err
 	}
+	lap("prepare")
 
 	if err := chromedp.Do(ctx, chromedp.Navigate(pageURL)); err != nil {
+		lap("navigate-failed")
 		return nil, fmt.Errorf("loading %s: %w", pageURL, err)
 	}
+	lap("navigate")
 	r.mu.Lock()
 	status := r.status
 	r.mu.Unlock()

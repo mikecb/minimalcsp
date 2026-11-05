@@ -1,0 +1,56 @@
+name: Probe
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: Probe ${{ matrix.shard }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      PROBE_TIMEOUT: 170s
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Describe the runner
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP CPUs=$env:NUMBER_OF_PROCESSORS GOCACHE=$(go env GOCACHE)"
+          Get-Volume | Format-Table DriveLetter,FileSystemLabel,SizeRemaining,Size -AutoSize | Out-String
+          Get-PhysicalDisk | Format-Table FriendlyName,MediaType,BusType,Size -AutoSize | Out-String
+          (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AntivirusEnabled,AMRunningMode,QuickScanStartTime,FullScanStartTime | Out-String
+          (Get-MpPreference).ExclusionPath
+          Get-CimInstance Win32_ComputerSystem | Format-List Model,TotalPhysicalMemory | Out-String
+          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name,CPU | Format-Table -AutoSize | Out-String
+      - name: Start the sampler
+        shell: pwsh
+        run: Start-Process pwsh -ArgumentList '-NoProfile','-File','scripts/probe-sampler.ps1',"$env:RUNNER_TEMP\samples.log" -WindowStyle Hidden
+      - name: Run the browser tests twice
+        shell: bash
+        continue-on-error: true
+        working-directory: browser
+        run: |
+          for i in 1 2; do
+            echo "pass $i $(date -u +%T)"
+            PROBE_TRACE="$RUNNER_TEMP/trace-$i.log" go test -count=1 -json -timeout 25m ./... > "$RUNNER_TEMP/test-$i.json" || echo "pass $i failed"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: probe-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/samples.log
+            ${{ runner.temp }}/trace-*.log
+            ${{ runner.temp }}/test-*.json
