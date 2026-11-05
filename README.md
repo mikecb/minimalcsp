@@ -104,6 +104,8 @@ The library's module has a smaller CLI, `github.com/mikecb/minimalcsp/cmd/gencsp
 
 Scripts added by trusted scripts don't need listing. `'strict-dynamic'` trusts them, and it's in the policy only if the page needs it. The `hash` and `nonce` modes need Chrome 59, Firefox 116 or Safari 15.6, or later.
 
+If a policy lists hosts, `Warnings` names any source that lets injected markup run code: hosts with JSONP endpoints, hosts serving AngularJS, hosts where anyone can publish files, such as public CDNs, and anything that covers one of those, such as a wildcard. An exact URL on a public CDN is fine, but listing the whole host isn't, even if the page loads only one file from it. `Build` gives these warnings for the `url` mode, and `minimalcsp.ParsePolicy` gives them for a policy you already have. Browsers ignore host sources in a policy with `'strict-dynamic'`, so those policies get no warning.
+
 If verifying fails under `hash` because scripts use `import`, switch to `nonce`.
 
 ### Hosts that can't set headers
@@ -265,6 +267,7 @@ Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have th
 - Under `hash`, a script that changes needs a new policy, so scripts you don't control, such as analytics, can break the page without warning. Use `nonce` for those pages.
 - `'strict-dynamic'` doesn't trust scripts added through `document.write` or other parser-inserted routes. Verifying reports these, and they have to change.
 - Code in closed shadow roots, and code that a script added and that then rewrote itself, can't be captured. Each case gets a warning.
+- The list of bypassable hosts is short and checked by hand, so a source with no warning isn't proof that a host is safe.
 - To collect a site on a private network, turn off Chrome's `LocalNetworkAccessChecks` feature in `Options`. Otherwise Chrome blocks what the page loads, which shows up as warnings. Loopback addresses aren't affected.
 
 ## Development

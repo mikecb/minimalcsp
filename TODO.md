@@ -16,6 +16,7 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **`<meta>` policies:** the tag is checked enforced, because it has no report-only mode, so a page is tested the way it will really run. It goes after `<meta charset>`, which has to stay in the first 1024 bytes, and after `<head>`, since going above it loses the element's attributes. `Build` never emits the directives `<meta>` ignores, so the warning is about what the tag can't do, such as stopping framing. A tag doesn't suit nonces: a page with a server can set a header.
 - **Reports are untrusted:** anyone can send one, so a report never adds a source that can run code. Scripts need a hash, which reports don't have, and `base-uri`, `object-src` and `worker-src` could all let an attacker run code. These become warnings, and anything else is a suggestion for a person to review.
 - **Report delivery:** policies use `report-uri`, which the specification calls deprecated. Chrome ignores it when `report-to` is present, and `report-to` doesn't work on plain HTTP, so listing both loses every report on those pages. Testing in Chrome found this. Revisit if a browser drops `report-uri`.
+- **Bypass warnings:** the list of hosts is short, and each JSONP and AngularJS entry was run in Chrome, because most of the JSONP endpoints in Google's CSP Evaluator are gone. Warnings cover what a source allows, so a whole host warns and an exact URL usually doesn't. Flash isn't covered, since browsers no longer run it, and neither are hosts that need `'unsafe-eval'`. A site that loads AngularJS itself isn't covered, because that's about the page, not the host.
 - **Default:** policies trust scripts by hash, even though that means changing the page, because a policy that lists URLs doesn't meet the first goal. Listing URLs is still available as an explicit choice.
 
 ## Open questions
@@ -105,7 +106,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [x] Hash external scripts, and add the `integrity` attributes they need
 - [x] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about what `<meta>` doesn't support
 - [x] Document a rollout path: report-only first, then enforce
-- [ ] Warn about allowlisted hosts known to allow bypasses
+- [x] Warn about allowlisted hosts known to allow bypasses
 - [ ] Add setup examples for common servers and static hosts
 
 ## Phase 6: CLI and CI check
