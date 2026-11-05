@@ -1,6 +1,7 @@
 // Command gencsp runs a page in headless Chrome, prints the minimal working
 // Content Security Policy for it, and checks that the page works under that
-// policy. It needs Chrome or Chromium installed.
+// policy. "gencsp verify" checks a policy that already exists. It needs Chrome or
+// Chromium installed.
 package main
 
 import (
@@ -26,6 +27,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "verify" {
+		return verify(ctx, args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("gencsp", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	scripts := flags.String("scripts", "hash", "how to trust scripts: hash for static sites, nonce for servers, or url to leave the page unchanged")
@@ -37,6 +41,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	noSandbox := flags.Bool("no-sandbox", false, "run Chrome without its sandbox, which some containers need")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: gencsp [flags] <url>")
+		fmt.Fprintln(stderr, "       gencsp verify [flags] <url>...")
 		flags.PrintDefaults()
 	}
 	if flags.Parse(args) != nil {

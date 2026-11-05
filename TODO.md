@@ -112,7 +112,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 ## Phase 6: CLI and CI check
 
 - [x] Add a CLI that generates a policy and verifies it
-- [ ] Add a CLI command that verifies an existing policy
+- [x] Add a CLI command that verifies an existing policy
 - [ ] Add a CLI command that reads stored reports and prints suggestions
 - [ ] Merge the two CLIs, so one command works with or without a browser
 - [ ] Add a CI check that fails when a page needs something the policy doesn't allow

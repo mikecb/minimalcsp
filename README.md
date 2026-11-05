@@ -91,6 +91,31 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 
 The library's module has a smaller CLI, `github.com/mikecb/minimalcsp/cmd/gencsp`, which works without a browser by reading only the HTML. It installs under the same name, so install the one you want. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
 
+### Checking a policy you already have
+
+`gencsp verify` loads pages under an existing policy and lists everything it would block:
+
+```bash
+gencsp verify https://example.com
+```
+
+With no policy given, this checks the one each page sends in its headers, using the report-only policy if the page doesn't enforce one. To try a policy before you deploy it, pass it in:
+
+```bash
+gencsp verify -policy-file policy.txt -pages 20 https://example.com
+```
+
+| Flag | Effect |
+|---|---|
+| `-policy text` | Check this policy, instead of the one each page sends |
+| `-policy-file path` | Read the policy to check from a file |
+| `-pages n` | Crawl up to `n` pages on the same origin from each URL |
+| `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
+
+It exits with status 0 if nothing was blocked, 1 if something was or a page couldn't be checked, and 2 if the command itself is wrong. `warning:` lines name [sources that let injected markup run code](#choosing-how-to-trust-scripts). They don't affect the exit status.
+
+The policy runs in report-only mode, so one blocked resource can't hide what depended on it, and it reports everything, including code a page tries and copes without. Any `report-uri` is left out, so checking a policy adds nothing to your reports. A `<meta>` policy isn't read from the page, so pass it with `-policy`, and remember that a tag in the page stays in force during the check.
+
 ### Choosing how to trust scripts
 
 | | `hash` (the default) | `nonce` | `url` |
