@@ -30,7 +30,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	policy := minimalcsp.Build(page, minimalcsp.Options{ExactPaths: *exactPaths})
+	policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: *exactPaths})
 	fmt.Println(policy)
 	for _, warning := range policy.Warnings {
 		fmt.Fprintln(os.Stderr, "warning:", warning)

@@ -90,7 +90,7 @@ func TestVerifyCoversEveryPage(t *testing.T) {
 }
 
 func TestWarningsAndBlockers(t *testing.T) {
-	code, _, stderr := gencsp(t, page(`<script src=/missing.js></script><p onclick="go()">x</p>`))
+	code, _, stderr := gencsp(t, page(`<script src=/missing.js></script><p onclick="go()">x</p>`), "-scripts", "url")
 	if code != 0 {
 		t.Errorf("exit %d: code the policy says it blocks isn't a failure", code)
 	}
@@ -128,7 +128,7 @@ func TestVerifyFailure(t *testing.T) {
 
 func TestUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
-	for _, args := range [][]string{{}, {"a", "b"}, {"-unknown", "x"}} {
+	for _, args := range [][]string{{}, {"a", "b"}, {"-unknown", "x"}, {"-scripts", "other", "x"}} {
 		if code := run(context.Background(), args, &out, &errOut); code != 2 {
 			t.Errorf("run(%q) = %d, want 2", args, code)
 		}
@@ -174,5 +174,54 @@ func TestExplained(t *testing.T) {
 		if got := explained(tt.v, policy); got != tt.want {
 			t.Errorf("explained(%+v) = %v", tt.v, got)
 		}
+	}
+}
+
+// scriptPage serves a page with one external script.
+func scriptPage(script string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			fmt.Fprint(w, prefix+`<script src=/a.js></script>`)
+		case "/a.js", "/b.js":
+			w.Header().Set("Content-Type", "text/javascript")
+			fmt.Fprint(w, script)
+		}
+	}
+}
+
+func TestHashByDefault(t *testing.T) {
+	code, stdout, stderr := gencsp(t, scriptPage(`window.ran = 1`))
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "script-src 'sha256-") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "change: ") || !strings.Contains(stderr, `/a.js needs integrity="sha256-`) {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestScriptsNonce(t *testing.T) {
+	code, stdout, stderr := gencsp(t, scriptPage(`window.ran = 1`), "-scripts", "nonce")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "script-src 'nonce-{nonce}'") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "change: every script element") || strings.Contains(stderr, "integrity") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestHintsAtNonces(t *testing.T) {
+	code, _, stderr := gencsp(t, scriptPage(`if (!window.again) { window.again = 1; import("/b.js") }`))
+	if code != 1 || !strings.Contains(stderr, "hint: ") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+	if code, _, stderr := gencsp(t, scriptPage(`if (!window.again) { window.again = 1; import("/b.js") }`), "-scripts", "nonce"); code != 0 {
+		t.Errorf("nonce: exit %d, stderr = %q", code, stderr)
 	}
 }

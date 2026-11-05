@@ -28,6 +28,7 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("gencsp", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	scripts := flags.String("scripts", "hash", "how to trust scripts: hash for static sites, nonce for servers, or url to leave the page unchanged")
 	exactPaths := flags.Bool("exact-paths", false, "list resources by URL rather than by origin")
 	maxPages := flags.Int("pages", 1, "crawl up to this many pages on the same origin")
 	skipVerify := flags.Bool("no-verify", false, "don't check the page under the generated policy")
@@ -39,7 +40,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if flags.Parse(args) != nil {
 		return 2
 	}
-	if flags.NArg() != 1 {
+	trust, ok := map[string]minimalcsp.ScriptTrust{
+		"hash":  minimalcsp.ByHash,
+		"nonce": minimalcsp.ByNonce,
+		"url":   minimalcsp.ByURL,
+	}[*scripts]
+	if flags.NArg() != 1 || !ok {
 		flags.Usage()
 		return 2
 	}
@@ -53,7 +59,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "gencsp:", err)
 		return 1
 	}
-	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{ExactPaths: *exactPaths})
+	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{Scripts: trust, ExactPaths: *exactPaths})
 
 	fmt.Fprintln(stdout, policy)
 	for _, warning := range policy.Warnings {
@@ -61,6 +67,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	for _, blocker := range policy.Blockers {
 		fmt.Fprintln(stderr, "blocked:", blocker)
+	}
+	for _, integrity := range policy.Integrity {
+		fmt.Fprintln(stderr, "change:", integrity)
+	}
+	if trust == minimalcsp.ByNonce {
+		fmt.Fprintln(stderr, "change: every script element in the page as served needs the nonce")
 	}
 	if *skipVerify {
 		return 0
@@ -70,7 +82,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	for i, page := range pages {
 		urls[i] = page.URL.String()
 	}
-	violations, err := collector.Verify(ctx, policy.String(), urls...)
+	violations, err := collector.VerifyPolicy(ctx, policy, urls...)
 	if err != nil {
 		fmt.Fprintln(stderr, "gencsp: verifying:", err)
 		return 1
@@ -81,6 +93,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "violation: %s: %s\n", v.Page, v)
 			status = 1
 		}
+	}
+	if status != 0 && trust == minimalcsp.ByHash {
+		fmt.Fprintln(stderr, "hint: scripts trusted by hash can't use import, and need CORS if they're cross-origin, so try -scripts nonce")
 	}
 	return status
 }

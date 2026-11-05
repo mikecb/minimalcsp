@@ -8,6 +8,7 @@
 package minimalcsp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/net/html"
 	"golang.org/x/net/idna"
 )
 
@@ -34,6 +36,14 @@ type Finding struct {
 	Directive string   // The directive that governs it, such as "img-src".
 	URL       *url.URL // The resource's absolute URL, or nil for inline code.
 	Code      string   // The inline code, exactly as the browser sees it.
+
+	// Hashes holds an external script's hash source expressions without their
+	// quotes, such as "sha256-...".
+	Hashes []string
+
+	// Loaded reports that another script added this script, so it wasn't in
+	// the page as served. 'strict-dynamic' trusts it through that script.
+	Loaded bool
 }
 
 // Blocker is inline code that a strict policy will block and that can't be
@@ -100,11 +110,50 @@ type Collector interface {
 	Collect(ctx context.Context, pageURL string) (*Page, error)
 }
 
+// ScriptTrust is how a policy decides which scripts may run.
+type ScriptTrust int
+
+const (
+	// ByHash trusts scripts by hash, for sites that can't vary a response per
+	// request. External scripts need integrity attributes, which Apply adds,
+	// and cross-origin ones need CORS. Scripts trusted this way can't use
+	// import, statically or dynamically, so pages that do need ByNonce.
+	ByHash ScriptTrust = iota
+
+	// ByNonce trusts scripts carrying a nonce that changes on every response.
+	// It has none of ByHash's limits, but it needs a server. See NonceMiddleware.
+	ByNonce
+
+	// ByURL lists external scripts by URL, so the page needs no changes. It's
+	// weaker, since anything an attacker can get onto a listed URL will run.
+	ByURL
+)
+
+// NoncePlaceholder stands in for the nonce in a ByNonce policy.
+const NoncePlaceholder = "{nonce}"
+
 // Options controls how Build reduces resources to sources.
 type Options struct {
+	// Scripts is how the policy trusts scripts. The default is ByHash.
+	Scripts ScriptTrust
+
 	// ExactPaths lists resources by URL rather than by origin. This is tighter
 	// but needs regenerating whenever a resource moves.
 	ExactPaths bool
+}
+
+// Integrity is an attribute a ByHash policy needs on a script element.
+type Integrity struct {
+	URL         *url.URL // The script.
+	Value       string   // The value for the integrity attribute.
+	CrossOrigin bool     // Whether it also needs crossorigin="anonymous".
+}
+
+func (i Integrity) String() string {
+	if i.CrossOrigin {
+		return fmt.Sprintf("%s needs integrity=%q crossorigin=\"anonymous\"", i.URL, i.Value)
+	}
+	return fmt.Sprintf("%s needs integrity=%q", i.URL, i.Value)
 }
 
 // Directive is one entry in a policy.
@@ -117,17 +166,106 @@ type Directive struct {
 // before deploying it.
 type Policy struct {
 	Directives []Directive
-	Blockers   []Blocker // Inline code this policy blocks.
-	Warnings   []string  // Weaknesses in the policy or gaps in what was seen.
+	Blockers   []Blocker   // Inline code this policy blocks.
+	Warnings   []string    // Weaknesses in the policy or gaps in what was seen.
+	Integrity  []Integrity // Attributes the page needs. Apply adds them.
 }
 
-// String returns the policy as a Content-Security-Policy header value.
+// String returns the policy as a Content-Security-Policy header value. A
+// ByNonce policy has NoncePlaceholder in place of the nonce.
 func (p *Policy) String() string {
 	parts := make([]string, len(p.Directives))
 	for i, d := range p.Directives {
 		parts[i] = d.Name + " " + strings.Join(d.Sources, " ")
 	}
 	return strings.Join(parts, "; ")
+}
+
+// WithNonce returns the policy as a header value for a response using nonce.
+func (p *Policy) WithNonce(nonce string) string {
+	return strings.ReplaceAll(p.String(), NoncePlaceholder, nonce)
+}
+
+// Apply returns document, a page served from pageURL, with the integrity
+// attributes the policy needs. Everything else stays byte for byte, so hashes
+// of inline code still match.
+func (p *Policy) Apply(document []byte, pageURL *url.URL) []byte {
+	return EditScriptTags(document, pageURL, func(src *url.URL) []html.Attribute {
+		for _, i := range p.Integrity {
+			if src == nil || i.URL.String() != src.String() {
+				continue
+			}
+			attrs := []html.Attribute{{Key: "integrity", Val: i.Value}}
+			if i.CrossOrigin {
+				attrs = append(attrs, html.Attribute{Key: "crossorigin", Val: "anonymous"})
+			}
+			return attrs
+		}
+		return nil
+	})
+}
+
+// EditScriptTags returns document with attributes added to its script elements.
+// It calls attrs with each element's absolute src, or nil for inline scripts.
+// Attributes an element already has are left alone, and everything else stays
+// byte for byte.
+//
+// Never use this to add nonces to a page as it's served. A nonce on every
+// script includes any script an attacker managed to inject, which defeats the
+// policy. Nonces belong in the templates, where only real scripts have them.
+func EditScriptTags(document []byte, pageURL *url.URL, attrs func(src *url.URL) []html.Attribute) []byte {
+	var out bytes.Buffer
+	base := pageURL
+	z := html.NewTokenizer(bytes.NewReader(document))
+	for {
+		kind := z.Next()
+		// Reading a token can change what Raw returned, so keep a copy.
+		raw := bytes.Clone(z.Raw())
+		if kind == html.ErrorToken {
+			out.Write(raw)
+			return out.Bytes()
+		}
+		if kind != html.StartTagToken && kind != html.SelfClosingTagToken {
+			out.Write(raw)
+			continue
+		}
+		tag := z.Token()
+		if tag.Data == "base" {
+			if href, ok := tokenAttr(tag, "href"); ok {
+				if u, err := base.Parse(cleanURL(href)); err == nil {
+					base = u
+				}
+			}
+		}
+		if tag.Data != "script" {
+			out.Write(raw)
+			continue
+		}
+		var src *url.URL
+		if value, ok := tokenAttr(tag, "src"); ok {
+			src, _ = base.Parse(cleanURL(value))
+		}
+		end := len(raw) - 1
+		if kind == html.SelfClosingTagToken {
+			end--
+		}
+		out.Write(raw[:end])
+		for _, a := range attrs(src) {
+			if _, exists := tokenAttr(tag, a.Key); !exists {
+				fmt.Fprintf(&out, " %s=%q", a.Key, a.Val)
+			}
+		}
+		out.Write(raw[end:])
+	}
+}
+
+func tokenAttr(tag html.Token, key string) (string, bool) {
+	for _, a := range tag.Attr {
+		if a.Key == key {
+			return a.Val, true
+		}
+	}
+	return "", false
 }
 
 // Build returns the tightest policy that allows everything in page. It denies
@@ -146,7 +284,15 @@ func Build(page *Page, opts Options) *Policy {
 	}
 
 	sources := map[string][]string{}
+	if opts.Scripts != ByURL {
+		if list := policy.trustScripts(page, opts.Scripts); len(list) > 0 {
+			sources["script-src"] = list
+		}
+	}
 	for _, f := range page.Findings {
+		if f.Directive == "script-src" && opts.Scripts != ByURL {
+			continue
+		}
 		source := sourceFor(f, page.URL, opts)
 		if slices.Contains(sources[f.Directive], source) {
 			continue
@@ -173,6 +319,52 @@ func Build(page *Page, opts Options) *Policy {
 		policy.Directives = append(policy.Directives, Directive{name, sources[name]})
 	}
 	return policy
+}
+
+// trustScripts returns the script-src sources for a page under ByHash or
+// ByNonce. Only scripts in the page as served need trusting directly, and
+// 'strict-dynamic' is there only if the page has scripts that rely on it.
+func (p *Policy) trustScripts(page *Page, trust ScriptTrust) []string {
+	var sources []string
+	add := func(source string) {
+		if !slices.Contains(sources, source) {
+			sources = append(sources, source)
+		}
+	}
+	var hasScripts, hasLoaded bool
+	for _, f := range page.Findings {
+		if f.Directive != "script-src" {
+			continue
+		}
+		hasScripts = true
+		switch {
+		case f.Loaded:
+			hasLoaded = true
+		case trust == ByNonce:
+		case f.URL == nil:
+			add(sourceFor(f, page.URL, Options{}))
+		case len(f.Hashes) == 0:
+			p.Warnings = append(p.Warnings, fmt.Sprintf("couldn't hash %s, so the policy will block it", f.URL))
+		default:
+			for _, hash := range f.Hashes {
+				add("'" + hash + "'")
+			}
+			if !slices.ContainsFunc(p.Integrity, func(i Integrity) bool { return i.URL.String() == f.URL.String() }) {
+				p.Integrity = append(p.Integrity, Integrity{
+					URL:         f.URL,
+					Value:       strings.Join(f.Hashes, " "),
+					CrossOrigin: origin(f.URL) != origin(page.URL),
+				})
+			}
+		}
+	}
+	if trust == ByNonce && hasScripts {
+		add("'nonce-" + NoncePlaceholder + "'")
+	}
+	if hasLoaded {
+		add("'strict-dynamic'")
+	}
+	return sources
 }
 
 // sourceFor returns the CSP source expression that allows f.

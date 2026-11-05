@@ -11,9 +11,13 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **Audience:** a Go library first. The CLI and CI check are thin layers on top of it.
 - **Browser dependency:** the headless collector lives in its own module, built on chromedp, so that library users don't depend on it.
 
+- **External scripts:** servers use nonces, which have no limits. Static sites use hashes with `integrity` attributes, which Chrome 59, Firefox 116 and Safari 15.6 support. A hashed inline loader was the other option, and testing in Chrome ruled it out: scripts it loads miss `DOMContentLoaded` and run after later inline scripts, which breaks ordinary pages without any error. Scripts trusted by hash can't use `import`, because they're parser-inserted and nothing carries their trust to what they import, so those pages need nonces.
+- **Nonces:** these go in templates. A filter that adds them to responses would also nonce injected scripts, so the library deliberately doesn't offer one.
+- **Default:** policies trust scripts by hash, even though that means changing the page, because a policy that lists URLs doesn't meet the first goal. Listing URLs is still available as an explicit choice.
+
 ## Open questions
 
-- **External scripts on static sites:** with no server to issue nonces, how do they load without a URL allowlist? The proposal is a hashed inline loader with `'strict-dynamic'`. The alternative is hashing external scripts through `integrity` attributes where browsers support it. Until this is settled, they're listed by exact URL with a warning, because `'strict-dynamic'` makes browsers ignore URLs.
+- **Modules on static sites:** should pages that use `import` get a loader just for their module scripts? Module scripts already run late, so the loader's ordering problems may not apply, and it works in Chrome. For now these pages need nonces.
 
 ## Phase 1: Fix known bugs (done)
 
@@ -93,8 +97,9 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 
 ## Phase 5: Any deployment
 
-- [ ] Add nonce middleware for Go servers
-- [ ] Support `'strict-dynamic'`, and stop listing external scripts by URL
+- [x] Add nonce middleware for Go servers
+- [x] Support `'strict-dynamic'`, and stop listing external scripts by URL by default
+- [x] Hash external scripts, and add the `integrity` attributes they need
 - [ ] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about directives `<meta>` doesn't support
 - [ ] Document a rollout path: report-only first, then enforce
 - [ ] Warn about allowlisted hosts known to allow bypasses

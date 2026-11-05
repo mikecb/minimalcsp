@@ -200,7 +200,7 @@ func TestFindsWhatStaticAnalysisCant(t *testing.T) {
 			c := collector()
 			pageURL := "http://site.test:" + port + "/"
 
-			policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{})
+			policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 			for name, want := range tt.want {
 				var expanded []string
 				for _, source := range want {
@@ -235,7 +235,7 @@ func TestInlineCode(t *testing.T) {
 	})
 	c := collector()
 	pageURL := "http://site.test:" + port + "/"
-	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 
 	if got, want := sources(t, policy, "style-src"), []string{hash(style)}; !slices.Equal(got, want) {
 		t.Errorf("style-src = %v, want %v", got, want)
@@ -265,7 +265,7 @@ func TestInertRemovedCodeIsNotAllowed(t *testing.T) {
 			document.head.appendChild(Object.assign(document.createElement("script"), {type: "text/plain", textContent: "more"})).remove()`),
 	})
 	page := collect(t, collector(), "http://site.test:"+port+"/")
-	policy := minimalcsp.Build(page, minimalcsp.Options{})
+	policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got := policy.String(); strings.Contains(got, hash(inert)) || strings.Contains(got, hash("more")) {
 		t.Errorf("policy allows code that never ran: %s", got)
 	}
@@ -343,7 +343,7 @@ func TestPagesOwnPolicyDoesNotHideResources(t *testing.T) {
 				w.Header().Set("Content-Type", "text/html")
 				fmt.Fprintf(w, `<script>new Image().src = "http://img.test:%s/i.png"</script>`, port)
 			}
-			policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{})
+			policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 			want := []string{"'self'", "http://img.test:" + port}
 			if got := sources(t, policy, "img-src"); !slices.Equal(got, want) {
 				t.Errorf("img-src = %v, want %v\n%s", got, want, policy)
@@ -373,7 +373,7 @@ func TestCollectFollowsRedirects(t *testing.T) {
 	if got, want := page.URL.String(), "http://new.test:"+port+"/final"; got != want {
 		t.Errorf("URL = %s, want %s", got, want)
 	}
-	policy := minimalcsp.Build(page, minimalcsp.Options{})
+	policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got := sources(t, policy, "img-src"); !slices.Equal(got, []string{"'self'"}) {
 		t.Errorf("img-src = %v", got)
 	}
@@ -386,7 +386,7 @@ func TestCollectDecodesCharset(t *testing.T) {
 	})
 	c := collector()
 	pageURL := "http://site.test:" + port + "/"
-	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	want := []string{hash("window.x = 'é';")}
 	if got := sources(t, policy, "script-src"); !slices.Equal(got, want) {
 		t.Errorf("script-src = %v, want %v", got, want)
@@ -437,7 +437,7 @@ func TestSlowResourcesAreWaitedFor(t *testing.T) {
 	}
 	c := collector()
 	c.Settle = 500 * time.Millisecond
-	policy := minimalcsp.Build(collect(t, c, "http://site.test:"+port+"/"), minimalcsp.Options{ExactPaths: true})
+	policy := minimalcsp.Build(collect(t, c, "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if !strings.Contains(policy.String(), "/after.png") {
 		t.Errorf("the image after a slow request is missing: %s", policy)
 	}
@@ -466,13 +466,13 @@ func TestActions(t *testing.T) {
 	c := collector()
 	pageURL := "http://site.test:" + port + "/"
 
-	before := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{ExactPaths: true})
+	before := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if strings.Contains(before.String(), "/menu.png") {
 		t.Fatalf("the image shouldn't load without the click: %s", before)
 	}
 
 	c.Actions = []chromedp.Action[chromedp.Void]{chromedp.Click("#b")}
-	after := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{ExactPaths: true})
+	after := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if !strings.Contains(after.String(), "/menu.png") {
 		t.Errorf("the image after the click is missing: %s", after)
 	}
@@ -555,7 +555,7 @@ func TestCrawl(t *testing.T) {
 		t.Errorf("warnings = %v, want one for the broken link", pages[0].Warnings)
 	}
 
-	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{})
+	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got, want := sources(t, policy, "img-src"), []string{"'self'", "http://cdn.test:" + port}; !slices.Equal(got, want) {
 		t.Errorf("img-src = %v, want %v", got, want)
 	}
@@ -682,17 +682,19 @@ func TestRemovedStyleIsAllowed(t *testing.T) {
 	port := serve(t, site{
 		"site.test/": html(`<style id=s>` + style + `</style><script>document.getElementById("s").remove()</script>`),
 	})
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got, want := sources(t, policy, "style-src"), []string{hash(style)}; !slices.Equal(got, want) {
 		t.Errorf("style-src = %v, want %v", got, want)
 	}
 }
 
-// A script that rewrites itself ran with code that's no longer anywhere, so its
-// hash can't be known.
+// A script that a script added and that then rewrote itself ran with code
+// that's no longer anywhere, so its hash can't be known.
 func TestUncapturedCodeIsReported(t *testing.T) {
 	port := serve(t, site{
-		"site.test/": html(`<script id=s>document.getElementById("s").textContent = "changed"</script>`),
+		"site.test/": html(`<script>const s = document.createElement("script");
+			s.textContent = "document.currentScript.textContent = 1";
+			document.head.appendChild(s);</script>`),
 	})
 	page := collect(t, collector(), "http://site.test:"+port+"/")
 	if !slices.ContainsFunc(page.Warnings, func(w string) bool { return strings.Contains(w, "couldn't capture") }) {
@@ -706,7 +708,7 @@ func TestBaseAddedByScript(t *testing.T) {
 	s["site.test/"] = html(fmt.Sprintf(`<script>
 		document.head.appendChild(Object.assign(document.createElement("base"), {href: "http://base.test:%[1]s/"}));
 	</script>`, port))
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got, want := sources(t, policy, "base-uri"), []string{"http://base.test:" + port}; !slices.Equal(got, want) {
 		t.Errorf("base-uri = %v, want %v\n%s", got, want, policy)
 	}
@@ -722,7 +724,7 @@ func TestShadowRoots(t *testing.T) {
 	port := serve(t, site{"site.test/": html(`<body><script>` + attach + `</script>`)})
 	c := collector()
 	pageURL := "http://site.test:" + port + "/"
-	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	got, want := sources(t, policy, "style-src"), []string{hash(open), hash(nested)}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
@@ -771,7 +773,7 @@ func TestCompressedPage(t *testing.T) {
 		w.Header().Set("Content-Length", strconv.Itoa(compressed.Len()))
 		w.Write(compressed.Bytes())
 	}})
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{ExactPaths: true})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if !strings.Contains(policy.String(), hash(script)) || !strings.Contains(policy.String(), "/compressed.png") {
 		t.Errorf("policy = %s", policy)
 	}
@@ -788,7 +790,7 @@ func TestFramesKeepTheirOwnPolicy(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<script>parent.postMessage("ran", "*")</script>`)
 	}
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{ExactPaths: true})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if strings.Contains(policy.String(), "/frame-script-ran.png") {
 		t.Errorf("the frame lost its policy: %s", policy)
 	}
@@ -797,7 +799,7 @@ func TestFramesKeepTheirOwnPolicy(t *testing.T) {
 func TestRemovedCodeWithSurroundingSpace(t *testing.T) {
 	const script = "\n\t\tdocument.currentScript.remove();\n\t"
 	port := serve(t, site{"site.test/": html(`<script>` + script + `</script>`)})
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got, want := sources(t, policy, "script-src"), []string{hash(script)}; !slices.Equal(got, want) {
 		t.Errorf("script-src = %v, want %v", got, want)
 	}
@@ -821,7 +823,7 @@ func TestPagesCantSeeTheRecorder(t *testing.T) {
 	port := serve(t, site{"site.test/": html(fmt.Sprintf(`<script>
 		if (window.%s) new Image().src = "/visible.png";
 	</script>`, "__minimalcspReport"))})
-	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{ExactPaths: true})
+	policy := minimalcsp.Build(collect(t, collector(), "http://site.test:"+port+"/"), minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 	if strings.Contains(policy.String(), "/visible.png") {
 		t.Errorf("policy = %s", policy)
 	}

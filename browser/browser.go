@@ -7,11 +7,15 @@
 package browser
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -23,6 +27,8 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/charset"
 
 	"github.com/mikecb/minimalcsp"
 )
@@ -54,6 +60,12 @@ var recorderScript = fmt.Sprintf(`(() => {
 		sample: e.sample,
 		element: e.target && e.target.nodeType === Node.ELEMENT_NODE ? e.target.localName : '',
 	}), true);
+
+	document.addEventListener('error', (e) => {
+		if (e.target.localName === 'script' && e.target.integrity) {
+			send({type: 'violation', directive: 'integrity', blocked: e.target.src});
+		}
+	}, true);
 
 	new MutationObserver((records) => {
 		for (const record of records) {
@@ -135,7 +147,23 @@ func (c Collector) Collect(ctx context.Context, pageURL string) (*minimalcsp.Pag
 // Verify loads each page under policy and returns everything the policy would
 // block. The policy is applied in report-only mode, so one blocked resource
 // can't hide what would have depended on it.
+//
+// A policy containing minimalcsp.NoncePlaceholder uses the nonce from a page's
+// own policy, so a page already serving nonces is checked as it is. On a page
+// with no nonce, every script gets one, as if the templates had been updated.
 func (c Collector) Verify(ctx context.Context, policy string, pageURLs ...string) ([]Violation, error) {
+	return c.verify(ctx, policy, nil, pageURLs)
+}
+
+// VerifyPolicy is Verify for a policy from minimalcsp.Build. It also makes the
+// changes the policy needs to the page, so it shows what will happen once those
+// changes are made. A script that fails because of them has a Violation with
+// the directive "integrity".
+func (c Collector) VerifyPolicy(ctx context.Context, policy *minimalcsp.Policy, pageURLs ...string) ([]Violation, error) {
+	return c.verify(ctx, policy.String(), policy.Apply, pageURLs)
+}
+
+func (c Collector) verify(ctx context.Context, policy string, rewrite rewriter, pageURLs []string) ([]Violation, error) {
 	browser, stop, err := c.start(ctx)
 	if err != nil {
 		return nil, err
@@ -143,7 +171,7 @@ func (c Collector) Verify(ctx context.Context, policy string, pageURLs ...string
 	defer stop()
 	var violations []Violation
 	for _, pageURL := range pageURLs {
-		loaded, err := c.load(browser, pageURL, withSamples(policy))
+		loaded, err := c.load(browser, pageURL, withSamples(policy), rewrite)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +272,7 @@ func (c Collector) start(ctx context.Context) (context.Context, context.CancelFu
 
 // collect turns one page load into a Page.
 func (c Collector) collect(browser context.Context, pageURL string) (*minimalcsp.Page, error) {
-	loaded, err := c.load(browser, pageURL, denyAll)
+	loaded, err := c.load(browser, pageURL, denyAll, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +287,15 @@ func (c Collector) collect(browser context.Context, pageURL string) (*minimalcsp
 		return nil, err
 	}
 	page.Incomplete = false
+	// The page as served holds the scripts it needs to trust directly. They
+	// may have changed since, or a script may have removed them.
+	served, err := servedScripts(loaded, final)
+	if err != nil {
+		return nil, err
+	}
+	page.Findings = append(page.Findings, served...)
 	addViolations(page, loaded)
+	markScripts(page, served, loaded.scripts)
 	for _, blocked := range loaded.blocked {
 		page.Warnings = append(page.Warnings,
 			fmt.Sprintf("Chrome blocked %s, so anything that depends on it wasn't seen", blocked))
@@ -271,11 +307,57 @@ func (c Collector) collect(browser context.Context, pageURL string) (*minimalcsp
 	return page, nil
 }
 
+// servedScripts returns the scripts in the page as it was served.
+func servedScripts(loaded *loadResult, final *url.URL) ([]minimalcsp.Finding, error) {
+	body, err := charset.NewReader(bytes.NewReader(loaded.source), loaded.contentType)
+	if err != nil {
+		// An empty page is valid, but the reader has nothing to detect.
+		return nil, nil
+	}
+	page, err := minimalcsp.Parse(body, final)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(page.Findings, func(f minimalcsp.Finding) bool {
+		return f.Directive != "script-src"
+	}), nil
+}
+
+// markScripts records which scripts other scripts added, and the hashes of the
+// external scripts in the page as served.
+func markScripts(page *minimalcsp.Page, served []minimalcsp.Finding, hashes map[string]string) {
+	for i := range page.Findings {
+		f := &page.Findings[i]
+		if f.Directive != "script-src" {
+			continue
+		}
+		match := slices.IndexFunc(served, func(s minimalcsp.Finding) bool {
+			if f.URL == nil || s.URL == nil {
+				return f.URL == nil && s.URL == nil && f.Code == s.Code
+			}
+			return withoutFragment(f.URL) == withoutFragment(s.URL)
+		})
+		f.Loaded = match < 0
+		if f.Loaded || f.URL == nil {
+			continue
+		}
+		// Violations don't carry an integrity attribute, so the page as served
+		// decides. A page with its own hash needs that one in the policy.
+		f.Hashes = served[match].Hashes
+		if hash, ok := hashes[withoutFragment(f.URL)]; ok && len(f.Hashes) == 0 {
+			f.Hashes = []string{hash}
+		}
+	}
+}
+
 // addViolations records what the browser saw that the DOM doesn't show.
 func addViolations(page *minimalcsp.Page, loaded *loadResult) {
 	var inline []Violation
 	for _, v := range loaded.violations {
 		switch {
+		case v.Directive == "integrity":
+			page.Warnings = append(page.Warnings,
+				fmt.Sprintf("%s failed its integrity check or didn't load", v.BlockedURI))
 		case v.Directive == "script-src-attr":
 			addBlocker(page, minimalcsp.ReasonEventHandler, v)
 		case v.Directive == "style-src-attr":
@@ -368,7 +450,14 @@ type loadResult struct {
 	hidden     []hiddenNode
 	blocked    []string // Requests Chrome refused, whatever the policy.
 	busy       bool
+
+	source      []byte            // The page as it was served.
+	contentType string            // The page's Content-Type.
+	scripts     map[string]string // Each script's hash expression, by URL.
 }
+
+// rewriter changes a page before the browser sees it.
+type rewriter func(document []byte, pageURL *url.URL) []byte
 
 // hiddenNode is a script or style outside the document's own tree.
 type hiddenNode struct {
@@ -381,6 +470,7 @@ type recorder struct {
 	ctx       context.Context
 	mainFrame cdp.FrameID
 	policy    string
+	rewrite   rewriter
 
 	mu       sync.Mutex
 	status   int64
@@ -471,11 +561,13 @@ func (r *recorder) message(payload string) {
 // headers in place isn't enough, because Chrome reads a response's policy
 // before DevTools can change it, so the page's own policy would stay in force.
 // Responses with no body to rewrite, such as failures, carry on as they are.
+// Scripts pass through here so that they can be hashed as the browser got them.
 func (r *recorder) intercept(e *fetch.EventRequestPaused) {
 	pass := func() {
 		chromedp.Call(r.ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: e.RequestID})
 	}
-	if e.FrameID != r.mainFrame {
+	isPage := e.ResourceType == network.ResourceTypeDocument && e.FrameID == r.mainFrame
+	if !isPage && e.ResourceType != network.ResourceTypeScript {
 		pass()
 		return
 	}
@@ -484,15 +576,73 @@ func (r *recorder) intercept(e *fetch.EventRequestPaused) {
 		pass()
 		return
 	}
+	if !isPage {
+		sum := sha256.Sum256(body.Body)
+		r.mu.Lock()
+		r.result.scripts[e.Request.URL] = "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+		r.mu.Unlock()
+		pass()
+		return
+	}
 	r.mu.Lock()
 	r.status = e.ResponseStatusCode
+	r.result.source = body.Body
+	r.result.contentType = headerValue(e.ResponseHeaders, "content-type")
 	r.mu.Unlock()
+
+	document, policy := r.prepareResponse(e, body.Body)
 	chromedp.Call(r.ctx, fetch.FulfillRequest, fetch.FulfillRequestParams{
 		RequestID:       e.RequestID,
 		ResponseCode:    e.ResponseStatusCode,
-		ResponseHeaders: replaceHeaders(e.ResponseHeaders, r.policy),
-		Body:            body.Body,
+		ResponseHeaders: replaceHeaders(e.ResponseHeaders, policy),
+		Body:            document,
 	})
+}
+
+// prepareResponse returns the page and policy to give the browser.
+func (r *recorder) prepareResponse(e *fetch.EventRequestPaused, document []byte) ([]byte, string) {
+	pageURL, err := url.Parse(e.Request.URL)
+	if err != nil {
+		return document, r.policy
+	}
+	if r.rewrite != nil {
+		document = r.rewrite(document, pageURL)
+	}
+	if !strings.Contains(r.policy, minimalcsp.NoncePlaceholder) {
+		return document, r.policy
+	}
+	nonce := pageNonce(e.ResponseHeaders)
+	if nonce == "" {
+		nonce = trialNonce
+		document = minimalcsp.EditScriptTags(document, pageURL, func(*url.URL) []html.Attribute {
+			return []html.Attribute{{Key: "nonce", Val: nonce}}
+		})
+	}
+	return document, strings.ReplaceAll(r.policy, minimalcsp.NoncePlaceholder, nonce)
+}
+
+// trialNonce stands in for a real nonce when trying a page that has none.
+const trialNonce = "bWluaW1hbGNzcC10cmlhbA"
+
+var nonceSource = regexp.MustCompile(`'nonce-([^']+)'`)
+
+// pageNonce returns the nonce in a page's own policy, if it has one.
+func pageNonce(headers []*fetch.HeaderEntry) string {
+	for _, name := range []string{"content-security-policy", "content-security-policy-report-only"} {
+		if match := nonceSource.FindStringSubmatch(headerValue(headers, name)); match != nil {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func headerValue(headers []*fetch.HeaderEntry, name string) string {
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, name) {
+			return h.Value
+		}
+	}
+	return ""
 }
 
 // replaceHeaders swaps the page's own policies for policy, in report-only mode.
@@ -508,7 +658,7 @@ func replaceHeaders(headers []*fetch.HeaderEntry, policy string) []*fetch.Header
 }
 
 // load opens pageURL in a new tab under policy and records what happens.
-func (c Collector) load(browser context.Context, pageURL, policy string) (*loadResult, error) {
+func (c Collector) load(browser context.Context, pageURL, policy string, rewrite rewriter) (*loadResult, error) {
 	timeout := cmp.Or(c.Timeout, 30*time.Second)
 	limited, cancel := context.WithTimeout(browser, timeout)
 	defer cancel()
@@ -526,8 +676,10 @@ func (c Collector) load(browser context.Context, pageURL, policy string) (*loadR
 		ctx:       ctx,
 		mainFrame: tree.FrameTree.Frame.ID,
 		policy:    policy,
+		rewrite:   rewrite,
 		pending:   map[network.RequestID]string{},
 		lastSeen:  time.Now(),
+		result:    loadResult{scripts: map[string]string{}},
 	}
 	if err := chromedp.Listen(ctx, r.handle); err != nil {
 		return nil, err
@@ -574,10 +726,10 @@ func prepare(ctx context.Context) error {
 	if _, err := chromedp.Call(ctx, network.Enable, network.EnableParams{}); err != nil {
 		return err
 	}
-	if _, err := chromedp.Call(ctx, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{{
-		ResourceType: network.ResourceTypeDocument,
-		RequestStage: fetch.RequestStageResponse,
-	}}}); err != nil {
+	if _, err := chromedp.Call(ctx, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{
+		{ResourceType: network.ResourceTypeDocument, RequestStage: fetch.RequestStageResponse},
+		{ResourceType: network.ResourceTypeScript, RequestStage: fetch.RequestStageResponse},
+	}}); err != nil {
 		return err
 	}
 	if _, err := chromedp.Call(ctx, runtime.AddBinding, runtime.AddBindingParams{
