@@ -11,14 +11,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-        arm: [base, noproxy]
-        include:
-          - arm: noproxy
-            flags: no-proxy-server
+        shard: [1, 2, 3, 4]
+        arm: [base, dtemp, otr]
     env:
+      PROBE_ARM: ${{ matrix.arm }}
       PROBE_TIMEOUT: 170s
-      PROBE_FLAGS: ${{ matrix.flags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,8 +44,9 @@ jobs:
         continue-on-error: true
         working-directory: browser
         run: |
-          mkdir -p "$RUNNER_TEMP/net"
-          export PROBE_NETLOG="$(cygpath -m "$RUNNER_TEMP/net")"
+          if [ "$PROBE_ARM" = dtemp ]; then
+            export TMP="$(cygpath -w "$RUNNER_TEMP")" TEMP="$(cygpath -w "$RUNNER_TEMP")"
+          fi
           for i in 1 2; do
             echo "pass $i $(date -u +%T)"
             PROBE_TRACE="$RUNNER_TEMP/trace-$i.log" go test -count=1 -json -timeout 25m ./... > "$RUNNER_TEMP/test-$i.json" || echo "pass $i failed"
@@ -58,7 +56,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-          $since = (Get-Date).AddMinutes(-30)
+          $since = (Get-Date).AddMinutes(-45)
           $logs = 'Microsoft-Windows-Windows Defender/Operational', 'Microsoft-Windows-WindowsUpdateClient/Operational', 'Setup', 'System'
           foreach ($log in $logs) {
             Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $since } -ErrorAction SilentlyContinue |
@@ -75,4 +73,3 @@ jobs:
             ${{ runner.temp }}/events.log
             ${{ runner.temp }}/trace-*.log
             ${{ runner.temp }}/test-*.json
-            ${{ runner.temp }}/net/*.json

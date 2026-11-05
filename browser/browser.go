@@ -729,7 +729,11 @@ func (c Collector) load(browser context.Context, pageURL, policy string, rewrite
 	}
 	limited, cancel := context.WithTimeout(browser, timeout)
 	defer cancel()
-	ctx, closeTab := chromedp.NewContext(limited)
+	var tabOpts []chromedp.ContextOption
+	if os.Getenv("PROBE_ARM") == "otr" {
+		tabOpts = append(tabOpts, chromedp.WithNewBrowserContext())
+	}
+	ctx, closeTab := chromedp.NewContext(limited, tabOpts...)
 	defer func() {
 		began := time.Now()
 		closeTab()

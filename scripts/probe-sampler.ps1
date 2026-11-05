@@ -1,7 +1,7 @@
 param([string]$Out)
 $counters = '\Processor(_Total)\% Processor Time', '\System\Processor Queue Length',
-    '\Memory\Available MBytes', '\PhysicalDisk(_Total)\Avg. Disk sec/Transfer',
-    '\PhysicalDisk(_Total)\Current Disk Queue Length', '\PhysicalDisk(_Total)\Disk Bytes/sec'
+    '\Memory\Available MBytes', '\PhysicalDisk(*)\Avg. Disk sec/Transfer',
+    '\PhysicalDisk(*)\Current Disk Queue Length', '\PhysicalDisk(*)\Disk Bytes/sec'
 $previous = @{}
 $services = @{}
 $tick = 0
@@ -17,7 +17,8 @@ while ($true) {
     try {
         $samples = (Get-Counter -Counter $counters -ErrorAction SilentlyContinue).CounterSamples
         $line += ' ' + (($samples | ForEach-Object {
-            (($_.Path.Split([char]92))[-1] -replace ' ', '_') + '=' + [math]::Round($_.CookedValue, 3)
+            $parts = $_.Path.Split([char]92)
+            (($parts[-2] -replace 'physicaldisk\(|\)', '' -replace ' ', '_') + '/' + ($parts[-1] -replace ' ', '_')) + '=' + [math]::Round($_.CookedValue, 3)
         }) -join ' ')
     } catch { $line += ' counter-error' }
     $now = @{}
