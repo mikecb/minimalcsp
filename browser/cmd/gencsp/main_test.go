@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,11 @@ func gencsp(t *testing.T, handler http.HandlerFunc, args ...string) (code int, s
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	if os.Getenv("CI") != "" {
-		args = append([]string{"-no-sandbox"}, args...)
+		at := 0
+		if len(args) > 0 && args[0] == "verify" {
+			at = 1
+		}
+		args = slices.Insert(slices.Clone(args), at, "-no-sandbox")
 	}
 	var out, errOut bytes.Buffer
 	code = run(t.Context(), append(args, server.URL), &out, &errOut)

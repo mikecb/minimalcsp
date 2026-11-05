@@ -151,6 +151,7 @@ func (c Collector) Collect(ctx context.Context, pageURL string) (*minimalcsp.Pag
 // A policy containing minimalcsp.NoncePlaceholder uses the nonce from a page's
 // own policy, so a page already serving nonces is checked as it is. On a page
 // with no nonce, every script gets one, as if the templates had been updated.
+// Any report-uri and report-to are left out, so nothing gets sent to them.
 func (c Collector) Verify(ctx context.Context, policy string, pageURLs ...string) ([]Violation, error) {
 	return c.verify(ctx, policy, nil, pageURLs)
 }
@@ -183,7 +184,7 @@ func (c Collector) verify(ctx context.Context, policy string, rewrite rewriter, 
 	defer stop()
 	var violations []Violation
 	for _, pageURL := range pageURLs {
-		loaded, err := c.load(browser, pageURL, withSamples(policy), rewrite)
+		loaded, err := c.load(browser, pageURL, withSamples(withoutReporting(policy)), rewrite)
 		if err != nil {
 			return nil, err
 		}
@@ -251,6 +252,15 @@ func withSamples(policy string) string {
 		}
 	}
 	return strings.Join(directives, ";")
+}
+
+// withoutReporting removes the directives that send violations somewhere, so
+// that checking a policy adds nothing to the reports a site is collecting.
+func withoutReporting(policy string) string {
+	return strings.Join(slices.DeleteFunc(strings.Split(policy, ";"), func(d string) bool {
+		fields := strings.Fields(d)
+		return len(fields) > 0 && (strings.EqualFold(fields[0], "report-uri") || strings.EqualFold(fields[0], "report-to"))
+	}), ";")
 }
 
 func withoutFragment(u *url.URL) string {

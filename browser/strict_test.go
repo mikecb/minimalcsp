@@ -224,6 +224,32 @@ func TestImports(t *testing.T) {
 	}
 }
 
+func TestVerifySendsNoReports(t *testing.T) {
+	var reports atomic.Int32
+	s := site{}
+	port := serve(t, s)
+	s["site.test/"] = func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!doctype html><link rel=icon href="data:,"><img src=/a.png>`)
+	}
+	s["site.test/reports"] = func(http.ResponseWriter, *http.Request) { reports.Add(1) }
+
+	// Chrome ignores report-uri when report-to is there, so this has only one.
+	policy := "default-src 'none'; img-src data:; report-uri /reports"
+	violations, err := collector().Verify(t.Context(), policy, "http://site.test:"+port+"/")
+	requireChrome(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) == 0 {
+		t.Error("the image should have been a violation")
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := reports.Load(); got != 0 {
+		t.Errorf("Chrome sent %d reports", got)
+	}
+}
+
 func TestVerifyTriesNoncesOnAPageWithout(t *testing.T) {
 	port := serve(t, site{
 		"site.test/":     html(`<script>window.x = 1</script><script src=/a.js></script>`),
