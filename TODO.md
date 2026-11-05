@@ -129,4 +129,4 @@ These can happen at any time.
 - [x] Remove the `canvas` and `figure` branches, since those elements have no `src`
 - [x] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP
 - [x] Rename `cli/` to `cmd/gencsp/` so `go install` produces a `gencsp` binary
-- [ ] Set up tagged releases, which the `browser` module needs before anyone can use it from outside this repository
+- [x] Set up tagged releases, which the `browser` module needs before anyone can use it from outside this repository

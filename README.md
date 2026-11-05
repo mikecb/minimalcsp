@@ -49,8 +49,14 @@ The repository has two Go modules, so that users of the library don't depend on 
 
 ### Command line
 
+Install `gencsp`, and give it a page:
+
 ```bash
-go -C browser run ./cmd/gencsp https://example.com
+go install github.com/mikecb/minimalcsp/browser/cmd/gencsp@latest
+```
+
+```bash
+gencsp https://example.com
 ```
 
 This runs the page in headless Chrome and prints a policy on stdout:
@@ -83,7 +89,7 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 | `-no-verify` | Don't load the page again under the policy |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
 
-`go run ./cmd/gencsp <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
+The library's module has a smaller CLI, `github.com/mikecb/minimalcsp/cmd/gencsp`, which works without a browser by reading only the HTML. It installs under the same name, so install the one you want. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
 
 ### Choosing how to trust scripts
 
@@ -204,7 +210,7 @@ For a host that can't set headers, use `policy.ApplyMeta` to add the tag too, an
 
 Use `collector.Crawl` with `minimalcsp.Merge` to cover several pages. To reach resources behind a click or a login, set `collector.Actions` to [chromedp](https://github.com/chromedp/chromedp) actions, which run on each page after it loads.
 
-Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have the HTML, `minimalcsp.Parse`. `browser` needs a tagged release of the library before it can be used from another module.
+Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have the HTML, `minimalcsp.Parse`.
 
 ## Limitations
 
@@ -225,6 +231,8 @@ bash scripts/check.sh
 
 This checks formatting, `go.mod`, `go vet`, the build and the tests for both modules, and fails if coverage drops below 95% for the library or 85% for the browser module. The browser tests skip themselves without Chrome, except in CI.
 
+`go.work` makes the `browser` module build against the library in this repository, rather than the released version it requires.
+
 Changes reach `master` only through pull requests. To merge, the `CI passed` check must succeed on a branch that's up to date with `master`, and every review thread must be resolved. That check covers:
 
 - `scripts/check.sh` on Linux, Windows and macOS
@@ -238,7 +246,7 @@ Dependabot proposes dependency and action updates weekly.
 The two modules have separate versions, and `browser` depends on the library, so the library goes first:
 
 1. Tag the library on `master` with a version like `v0.2.0`.
-2. In a pull request, update `browser/go.mod` to require that version.
+2. In a pull request, update `browser/go.mod` to require that version, with `go -C browser get github.com/mikecb/minimalcsp@v0.2.0`.
 3. Once that's merged, tag `master` with `browser/v0.2.0`.
 
 A tag is permanent. The Go module proxy keeps every version it sees, even if the tag is later deleted, so a bad release can only be replaced by a newer one.

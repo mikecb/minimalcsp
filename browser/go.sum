@@ -4,6 +4,8 @@ github.com/chromedp/chromedp v0.22.1 h1:F/oRceu42iAJsPo3EBzbDWe7xDduOdIs11W3YjXm
 github.com/chromedp/chromedp v0.22.1/go.mod h1:hJcPsoPrgxu4ulIXhO1WmtKjosCD8jbZh0+TeVFsod8=
 github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 h1:XGPtjxqp0FS8jj1Z7QGcSOSgyq1fUPjNyJXvi3KfI4A=
 github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875/go.mod h1:uNVvRXArCGbZ508SxYYTC5v1JWoz2voff5pm25jU1Ok=
+github.com/mikecb/minimalcsp v0.1.0 h1:FgG2bpHrTLw73d/7JifqlhiNSRqEW8zYtBvtuwC/Mc4=
+github.com/mikecb/minimalcsp v0.1.0/go.mod h1:kLCbU5ZdbO7oz8wLcNGRmVUP5mcBFvPaY/KrAlJkTwU=
 golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
 golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
