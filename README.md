@@ -31,7 +31,7 @@ The [roadmap](TODO.md) tracks what's left.
 | Inline code | Hashes and nonces only, never `'unsafe-inline'` | Hashes built |
 | Scripts | Trusted by hash or nonce with `'strict-dynamic'`, not URL allowlists | Built, with URLs as an explicit option |
 | Other resources | Origins by default, with exact paths as an option | Built |
-| Static sites | Hashes with `integrity` attributes, delivered in a header or a `<meta>` tag | Header value built |
+| Static sites | Hashes with `integrity` attributes, delivered in a header or a `<meta>` tag | Built |
 | Dynamic servers | Nonces, with middleware for Go servers | Built |
 | Unfixable inline code | Event handlers, `style` attributes, `javascript:` URLs and `eval` are reported for the site to fix | Built |
 | Interfaces | A Go library first, with a CLI and CI check built on it | Library and CLIs built |
@@ -76,6 +76,7 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 | Flag | Effect |
 |---|---|
 | `-scripts mode` | How to trust scripts: `hash`, `nonce` or `url`. See [Choosing how to trust scripts](#choosing-how-to-trust-scripts) |
+| `-meta` | Print a `<meta>` tag instead of a header value, and check the page under that tag. See [Hosts that can't set headers](#hosts-that-cant-set-headers) |
 | `-pages n` | Crawl up to `n` pages on the same origin, and build one policy for all of them |
 | `-exact-paths` | List resources by URL rather than by origin, which is tighter but needs regenerating whenever a resource moves |
 | `-no-verify` | Don't load the page again under the policy |
@@ -97,6 +98,26 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 Scripts added by trusted scripts don't need listing. `'strict-dynamic'` trusts them, and it's in the policy only if the page needs it. The `hash` and `nonce` modes need Chrome 59, Firefox 116 or Safari 15.6, or later.
 
 If verifying fails under `hash` because scripts use `import`, switch to `nonce`.
+
+### Hosts that can't set headers
+
+Some static hosts, such as GitHub Pages, don't let you set response headers. For those, `-meta` prints the policy as a tag:
+
+```html
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ...">
+```
+
+The tag goes at the start of `<head>`, after any `<meta charset>`. It has to come before everything it governs, because it only applies to what follows it, and browsers ignore it outside `<head>`. In the library, `Policy.ApplyMeta` puts it there, and replaces any policy tag already in the page.
+
+Use a header if you can, because a tag does less:
+
+- It has no report-only mode, so the first time it runs in a browser, it's enforced. `-meta` checks the page in Chrome with the tag in force, which is the closest thing to a trial. One blocked resource can hide whatever depended on it, so a clean run matters more than it does with a header.
+- It can't report violations, so you won't hear about pages it breaks.
+- Browsers ignore `frame-ancestors`, `report-uri` and `sandbox` in it, so a tag can't stop other sites framing your page.
+
+`-meta` doesn't work with `-scripts nonce`, because a nonce needs a server, and a server can set a header.
+
+To regenerate a policy, collect from a copy of the page without the tag. A tag already in the page stays in force during collection, which hides whatever it blocks.
 
 ### Nonces on a Go server
 
@@ -138,6 +159,8 @@ updated := policy.Apply(document, pageURL)
 ```
 
 `Apply` changes nothing else in the page, so it's safe to run in a build step. `collector.Verify` checks a policy string against a page as it stands.
+
+For a host that can't set headers, use `policy.ApplyMeta` to add the tag too, and `collector.VerifyMeta` to check the page with it in force. `minimalcsp.InsertMeta` does the same for a policy you wrote yourself.
 
 Use `collector.Crawl` with `minimalcsp.Merge` to cover several pages. To reach resources behind a click or a login, set `collector.Actions` to [chromedp](https://github.com/chromedp/chromedp) actions, which run on each page after it loads.
 

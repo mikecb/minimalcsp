@@ -13,6 +13,7 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 
 - **External scripts:** servers use nonces, which have no limits. Static sites use hashes with `integrity` attributes, which Chrome 59, Firefox 116 and Safari 15.6 support. A hashed inline loader was the other option, and testing in Chrome ruled it out: scripts it loads miss `DOMContentLoaded` and run after later inline scripts, which breaks ordinary pages without any error. Scripts trusted by hash can't use `import`, because they're parser-inserted and nothing carries their trust to what they import, so those pages need nonces.
 - **Nonces:** these go in templates. A filter that adds them to responses would also nonce injected scripts, so the library deliberately doesn't offer one.
+- **`<meta>` policies:** the tag is checked enforced, because it has no report-only mode, so a page is tested the way it will really run. It goes after `<meta charset>`, which has to stay in the first 1024 bytes, and after `<head>`, since going above it loses the element's attributes. `Build` never emits the directives `<meta>` ignores, so the warning is about what the tag can't do, such as stopping framing. A tag doesn't suit nonces: a page with a server can set a header.
 - **Default:** policies trust scripts by hash, even though that means changing the page, because a policy that lists URLs doesn't meet the first goal. Listing URLs is still available as an explicit choice.
 
 ## Open questions
@@ -100,7 +101,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [x] Add nonce middleware for Go servers
 - [x] Support `'strict-dynamic'`, and stop listing external scripts by URL by default
 - [x] Hash external scripts, and add the `integrity` attributes they need
-- [ ] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about directives `<meta>` doesn't support
+- [x] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about what `<meta>` doesn't support
 - [ ] Document a rollout path: report-only first, then enforce
 - [ ] Warn about allowlisted hosts known to allow bypasses
 - [ ] Add setup examples for common servers and static hosts

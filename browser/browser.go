@@ -163,6 +163,18 @@ func (c Collector) VerifyPolicy(ctx context.Context, policy *minimalcsp.Policy, 
 	return c.verify(ctx, policy.String(), policy.Apply, pageURLs)
 }
 
+// VerifyMeta loads each page with policy in a <meta> tag, as minimalcsp's
+// ApplyMeta would leave it, and returns everything the policy blocked. <meta>
+// has no report-only mode, so the policy is enforced: the page behaves as it
+// will when deployed, but one blocked resource hides whatever depended on it.
+// It doesn't suit a ByNonce policy.
+func (c Collector) VerifyMeta(ctx context.Context, policy *minimalcsp.Policy, pageURLs ...string) ([]Violation, error) {
+	sampled := withSamples(policy.String())
+	return c.verify(ctx, "", func(document []byte, pageURL *url.URL) []byte {
+		return minimalcsp.InsertMeta(policy.Apply(document, pageURL), sampled)
+	}, pageURLs)
+}
+
 func (c Collector) verify(ctx context.Context, policy string, rewrite rewriter, pageURLs []string) ([]Violation, error) {
 	browser, stop, err := c.start(ctx)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -365,6 +366,147 @@ func TestEnforcedNoncePolicy(t *testing.T) {
 	port := serve(t, s)
 	open(t, "http://site.test:"+port+"/")
 	if got, want := r.names(), []string{"dep", "mod"}; !slices.Equal(got, want) {
+		t.Errorf("ran %v, want %v", got, want)
+	}
+}
+
+func TestVerifyMeta(t *testing.T) {
+	const script = `window.ran = 1;`
+	const inline = `window.inline = 1;`
+	port := serve(t, site{
+		"site.test/":      html(`<script src=/a.js></script><script>` + inline + `</script><img src=/i.png>`),
+		"site.test/a.js":  content("text/javascript", script),
+		"site.test/i.png": http.NotFound,
+	})
+	c := collector()
+	pageURL := "http://site.test:" + port + "/"
+	policy := strictPolicy(t, c, pageURL, minimalcsp.ByHash)
+	violations, err := c.VerifyMeta(t.Context(), policy, pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Errorf("violations = %v\n%s", violations, policy)
+	}
+}
+
+// The policy really has to be in force: a report would still load the image.
+func TestVerifyMetaEnforces(t *testing.T) {
+	var loaded atomic.Bool
+	port := serve(t, site{
+		"site.test/": html(`<img src=/i.png>`),
+		"site.test/i.png": func(w http.ResponseWriter, _ *http.Request) {
+			loaded.Store(true)
+			http.NotFound(w, nil)
+		},
+	})
+	c := collector()
+	pageURL := "http://site.test:" + port + "/"
+	policy := strictPolicy(t, c, pageURL, minimalcsp.ByHash)
+	policy.Directives = slices.DeleteFunc(policy.Directives, func(d minimalcsp.Directive) bool { return d.Name == "img-src" })
+	loaded.Store(false)
+	violations, err := c.VerifyMeta(t.Context(), policy, pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := slices.DeleteFunc(violations, func(v browser.Violation) bool {
+		return v.Directive != "img-src" || !strings.HasSuffix(v.BlockedURI, "/i.png") || v.Page != pageURL
+	})
+	if len(blocked) != 1 {
+		t.Errorf("blocked = %v, want the image once", blocked)
+	}
+	if loaded.Load() {
+		t.Error("the image loaded, so the policy wasn't enforced")
+	}
+}
+
+// A page's own policy mustn't be counted against the one being tried.
+func TestVerifyMetaReplacesThePagesPolicies(t *testing.T) {
+	const page = `<meta http-equiv=Content-Security-Policy content="script-src 'none'"><script>window.a = 1;</script>`
+	port := serve(t, site{
+		"site.test/": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Security-Policy", "script-src 'none'")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<!doctype html><link rel=icon href=/favicon.ico>`+page)
+		},
+	})
+	c := collector()
+	pageURL := "http://site.test:" + port + "/"
+	policy := minimalcsp.Build(collect(t, c, pageURL), minimalcsp.Options{})
+	violations, err := c.VerifyMeta(t.Context(), policy, pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Errorf("violations = %v\n%s", violations, policy)
+	}
+}
+
+// Violations need samples, or the CLI can't tell which blockers they are.
+func TestVerifyMetaHasSamples(t *testing.T) {
+	port := serve(t, site{"site.test/": html(`<p onclick="go()">x</p><script>eval("1")</script>`)})
+	c := collector()
+	pageURL := "http://site.test:" + port + "/"
+	policy := strictPolicy(t, c, pageURL, minimalcsp.ByHash)
+	violations, err := c.VerifyMeta(t.Context(), policy, pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(violations, func(v browser.Violation) bool { return v.Sample != "" }) {
+		t.Errorf("violations = %v", violations)
+	}
+}
+
+func TestVerifyMetaWithCharset(t *testing.T) {
+	// In windows-1251 this byte is a letter, so the hash only matches if the
+	// browser still reads the charset once the tag is in the page.
+	const page = "<!doctype html><head><meta charset=windows-1251><title>t</title><script>window.text = '\xe9';</script>"
+	var scripts strings.Builder
+	for i := range 40 {
+		fmt.Fprintf(&scripts, "<script>window.n%d = %d;</script>", i, i)
+	}
+	port := serve(t, site{"site.test/": content("text/html", page+scripts.String())})
+	c := collector()
+	pageURL := "http://site.test:" + port + "/"
+	policy := strictPolicy(t, c, pageURL, minimalcsp.ByHash)
+	if !slices.Contains(sources(t, policy, "script-src"), hash("window.text = 'й';")) {
+		t.Fatalf("script-src = %v", sources(t, policy, "script-src"))
+	}
+	violations, err := c.VerifyMeta(t.Context(), policy, pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Errorf("violations = %v", violations)
+	}
+}
+
+func TestEnforcedMetaPolicy(t *testing.T) {
+	root := marker("root") + `const s = document.createElement("script"); s.src = "/child.js"; document.head.appendChild(s);`
+	const page = `<script src=/root.js></script>`
+	r := &running{}
+	s := site{
+		"site.test/root.js":     content("text/javascript", root),
+		"site.test/child.js":    content("text/javascript", marker("child")),
+		"site.test/evil.js":     content("text/javascript", marker("evil-external")),
+		"site.test/ran":         r.handler,
+		"site.test/":            html(page),
+		"site.test/favicon.ico": http.NotFound,
+	}
+	port := serve(t, s)
+	pageURL := "http://site.test:" + port + "/"
+	policy := strictPolicy(t, collector(), pageURL, minimalcsp.ByHash)
+	policy.Directives = append(policy.Directives, minimalcsp.Directive{Name: "img-src", Sources: []string{"'self'", "data:"}})
+	r.seen = nil // Collecting ran the scripts too.
+
+	parsed, err := url.Parse(pageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const injected = `<script>` + `new Image().src = "/ran?name=evil-inline";` + `</script><script src=/evil.js></script>`
+	s["site.test/"] = content("text/html; charset=utf-8", string(policy.ApplyMeta([]byte(`<!doctype html><link rel=icon href=data:,>`+page+injected), parsed)))
+	open(t, pageURL)
+	if got, want := r.names(), []string{"child", "root"}; !slices.Equal(got, want) {
 		t.Errorf("ran %v, want %v", got, want)
 	}
 }

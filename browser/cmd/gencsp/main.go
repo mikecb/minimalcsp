@@ -29,6 +29,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("gencsp", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	scripts := flags.String("scripts", "hash", "how to trust scripts: hash for static sites, nonce for servers, or url to leave the page unchanged")
+	meta := flags.Bool("meta", false, "print a <meta> tag instead of a header value, for hosts that can't set headers")
 	exactPaths := flags.Bool("exact-paths", false, "list resources by URL rather than by origin")
 	maxPages := flags.Int("pages", 1, "crawl up to this many pages on the same origin")
 	skipVerify := flags.Bool("no-verify", false, "don't check the page under the generated policy")
@@ -49,6 +50,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		flags.Usage()
 		return 2
 	}
+	if *meta && trust == minimalcsp.ByNonce {
+		fmt.Fprintln(stderr, "gencsp: -meta can't be used with -scripts nonce, because a nonce needs a server, and a server can set a header")
+		return 2
+	}
 
 	var collector browser.Collector
 	if *noSandbox {
@@ -61,9 +66,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{Scripts: trust, ExactPaths: *exactPaths})
 
-	fmt.Fprintln(stdout, policy)
+	if *meta {
+		fmt.Fprintln(stdout, policy.MetaTag())
+	} else {
+		fmt.Fprintln(stdout, policy)
+	}
 	for _, warning := range policy.Warnings {
 		fmt.Fprintln(stderr, "warning:", warning)
+	}
+	if *meta {
+		fmt.Fprintln(stderr, "warning: a <meta> policy can't run in report-only mode, report violations, or stop other sites framing the page, so use a header if you can")
 	}
 	for _, blocker := range policy.Blockers {
 		fmt.Fprintln(stderr, "blocked:", blocker)
@@ -74,6 +86,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if trust == minimalcsp.ByNonce {
 		fmt.Fprintln(stderr, "change: every script element in the page as served needs the nonce")
 	}
+	if *meta {
+		fmt.Fprintln(stderr, "change: the tag goes at the start of <head>, after any <meta charset>, and replaces any tag already there")
+	}
 	if *skipVerify {
 		return 0
 	}
@@ -82,7 +97,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	for i, page := range pages {
 		urls[i] = page.URL.String()
 	}
-	violations, err := collector.VerifyPolicy(ctx, policy, urls...)
+	verify := collector.VerifyPolicy
+	if *meta {
+		verify = collector.VerifyMeta
+	}
+	violations, err := verify(ctx, policy, urls...)
 	if err != nil {
 		fmt.Fprintln(stderr, "gencsp: verifying:", err)
 		return 1
