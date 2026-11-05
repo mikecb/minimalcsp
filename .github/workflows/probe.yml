@@ -5,15 +5,20 @@ permissions:
   contents: read
 jobs:
   probe:
-    name: Probe ${{ matrix.shard }}
+    name: Probe ${{ matrix.arm }} ${{ matrix.shard }}
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3]
+        arm: [base, noproxy]
+        include:
+          - arm: noproxy
+            flags: no-proxy-server
     env:
       PROBE_TIMEOUT: 170s
+      PROBE_FLAGS: ${{ matrix.flags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,14 +31,14 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP CPUs=$env:NUMBER_OF_PROCESSORS GOCACHE=$(go env GOCACHE)"
-          Get-Volume | Format-Table DriveLetter,FileSystemLabel,SizeRemaining,Size -AutoSize | Out-String
-          Get-PhysicalDisk | Format-Table FriendlyName,MediaType,BusType,Size -AutoSize | Out-String
+          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP CPUs=$env:NUMBER_OF_PROCESSORS"
+          "Boot: $((Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')) Now: $((Get-Date).ToUniversalTime().ToString('o'))"
+          Get-Volume | Format-Table DriveLetter,SizeRemaining,Size -AutoSize | Out-String
           (Get-Item "C:\Program Files\Google\Chrome\Application\chrome.exe").VersionInfo.ProductVersion
-          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AntivirusEnabled,AMRunningMode,QuickScanStartTime,FullScanStartTime | Out-String
-          (Get-MpPreference).ExclusionPath
-          Get-CimInstance Win32_ComputerSystem | Format-List Model,TotalPhysicalMemory | Out-String
-          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name,CPU | Format-Table -AutoSize | Out-String
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled,AntivirusEnabled,AMRunningMode | Out-String
+          Get-MpPreference | Format-List DisableRealtimeMonitoring,ExclusionPath | Out-String
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Format-List AutoDetect,ProxyEnable,AutoConfigURL | Out-String
+          netsh winhttp show proxy
       - name: Start the sampler
         shell: pwsh
         run: Start-Process pwsh -ArgumentList '-NoProfile','-File','scripts/probe-sampler.ps1',"$env:RUNNER_TEMP\samples.log" -WindowStyle Hidden
@@ -42,15 +47,32 @@ jobs:
         continue-on-error: true
         working-directory: browser
         run: |
+          mkdir -p "$RUNNER_TEMP/net"
+          export PROBE_NETLOG="$(cygpath -m "$RUNNER_TEMP/net")"
           for i in 1 2; do
             echo "pass $i $(date -u +%T)"
             PROBE_TRACE="$RUNNER_TEMP/trace-$i.log" go test -count=1 -json -timeout 25m ./... > "$RUNNER_TEMP/test-$i.json" || echo "pass $i failed"
           done
+      - name: Dump system events
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $since = (Get-Date).AddMinutes(-30)
+          $logs = 'Microsoft-Windows-Windows Defender/Operational', 'Microsoft-Windows-WindowsUpdateClient/Operational', 'Setup', 'System'
+          foreach ($log in $logs) {
+            Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $since } -ErrorAction SilentlyContinue |
+              Sort-Object TimeCreated | ForEach-Object {
+                "$($_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss')) [$log] $($_.Id) $(($_.Message -split "`n")[0])"
+              } | Out-File -Append "$env:RUNNER_TEMP\events.log"
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: probe-${{ matrix.shard }}
+          name: probe-${{ matrix.arm }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/samples.log
+            ${{ runner.temp }}/events.log
             ${{ runner.temp }}/trace-*.log
             ${{ runner.temp }}/test-*.json
+            ${{ runner.temp }}/net/*.json
