@@ -7,12 +7,12 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **Detection:** use a headless browser and report-only collection. Static HTML parsing can't see fonts from CSS, requests made by scripts, or anything added at runtime, so it can't show that a policy works. Its job is limited to a quick first pass.
 - **Sources:** tightness and ease of use should both hold for any deployment. Scripts are trusted by hash or nonce with `'strict-dynamic'`, not by URL. Other resources default to origins, with exact paths as an option.
 - **Inline code:** hashes and nonces only. minimalcsp never emits `'unsafe-inline'`, including as a fallback for old browsers.
+- **Inline event handlers and `style` attributes:** these can't be hashed without `'unsafe-hashes'`, so that stays off, and each one is reported as a blocker for the site to fix.
 - **Audience:** a Go library first. The CLI and CI check are thin layers on top of it.
 
 ## Open questions
 
-- **External scripts on static sites:** with no server to issue nonces, how do they load without a URL allowlist? The options are a hashed inline loader with `'strict-dynamic'`, or hashing external scripts through `integrity` attributes where browsers support it.
-- **Inline event handlers and `style` attributes:** these can't be hashed without `'unsafe-hashes'`. The proposal is to leave it off and report each one as a blocker for the site to fix.
+- **External scripts on static sites:** with no server to issue nonces, how do they load without a URL allowlist? The proposal is a hashed inline loader with `'strict-dynamic'`. The alternative is hashing external scripts through `integrity` attributes where browsers support it. Until this is settled, they're listed by exact URL with a warning, because `'strict-dynamic'` makes browsers ignore URLs.
 - **Browser dependency:** should the headless collector live in its own module, so that library users who don't need it avoid the dependency?
 
 ## Phase 1: Fix known bugs (done)
@@ -39,33 +39,33 @@ CLI:
 - [x] Show usage instead of panicking when no URL is given
 - [x] Fail on HTTP error statuses
 
-## Phase 2: Library core
+## Phase 2: Library core (done)
 
 The first version that produces a usable policy, for pages without runtime resources.
 
 API:
 
-- [ ] Define public types for a policy, a finding and a blocker
-- [ ] Define a collector interface, so static, browser and report sources feed the same policy builder
-- [ ] Have policy generation return a value instead of printing, so the CLI handles output
-- [ ] Return errors from the library instead of calling `log.Fatal`
+- [x] Define public types for a policy, a finding and a blocker
+- [x] Define a collector interface, so static, browser and report sources feed the same policy builder
+- [x] Have policy generation return a value instead of printing, so the CLI handles output
+- [x] Return errors from the library instead of calling `log.Fatal`
 
 No `unsafe-inline`:
 
-- [ ] Replace the `unsafe-inline` marker in `GetSources` with the inline code itself
-- [ ] Update the tests that expect `unsafe-inline`: the inline cases in `TestGetSources`, `TestGetSourcesFixture`, `TestMakePolicyFormat` and `TestMakePolicyQuotesKeywords`
-- [ ] Generate `sha256` hashes for inline scripts and styles
-- [ ] Report inline event handlers, `style` attributes and `javascript:` URLs as blockers
+- [x] Replace the `unsafe-inline` marker in `GetSources` with the inline code itself
+- [x] Update the tests that expect `unsafe-inline`
+- [x] Generate `sha256` hashes for inline scripts and styles
+- [x] Report inline event handlers, `style` attributes and `javascript:` URLs as blockers
 
 Valid output:
 
-- [ ] Resolve relative URLs against the page's URL and `<base>` tag
-- [ ] Convert same-origin sources to `'self'`
-- [ ] Reduce other sources to origins by default, with exact paths as an option
-- [ ] Reduce `data:` URIs to the `data:` scheme, and warn when `data:` is allowed for scripts
-- [ ] Start from `default-src 'none'`, and set `base-uri`, `form-action` and `object-src` explicitly
-- [ ] Use `frame-src` for iframes
-- [ ] Check output against a CSP parser in tests
+- [x] Resolve relative URLs against the page's URL and `<base>` tag
+- [x] Convert same-origin sources to `'self'`
+- [x] Reduce other sources to origins by default, with exact paths as an option
+- [x] Reduce `data:` URIs to the `data:` scheme, and warn when `data:` is allowed for scripts
+- [x] Start from `default-src 'none'`, and set `base-uri`, `form-action` and `object-src` explicitly
+- [x] Use `frame-src` for iframes
+- [x] Check output against the CSP grammar in tests
 
 ## Phase 3: Headless browser
 
@@ -94,7 +94,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 ## Phase 5: Any deployment
 
 - [ ] Add nonce middleware for Go servers
-- [ ] Support `'strict-dynamic'`
+- [ ] Support `'strict-dynamic'`, and stop listing external scripts by URL
 - [ ] Output a header value, or a `<meta>` tag for static hosts that can't set headers, warning about directives `<meta>` doesn't support
 - [ ] Document a rollout path: report-only first, then enforce
 - [ ] Warn about allowlisted hosts known to allow bypasses
@@ -112,8 +112,8 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 These can happen at any time.
 
 - [ ] Add CI that runs `go build`, `go vet` and `go test`
-- [ ] Replace the deprecated `io/ioutil`
-- [ ] Remove the `canvas` and `figure` branches, since those elements have no `src`
-- [ ] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP
+- [x] Replace the deprecated `io/ioutil`
+- [x] Remove the `canvas` and `figure` branches, since those elements have no `src`
+- [x] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP
 - [ ] Rename `cli/` to `cmd/gencsp/` so `go install` produces a `gencsp` binary
 - [ ] Set up tagged releases once phase 2 is done

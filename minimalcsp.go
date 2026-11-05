@@ -1,200 +1,190 @@
+// Package minimalcsp generates the minimal working Content Security Policy for
+// a webpage.
+//
+// A Collector gathers what a page needs into a Page, and Build turns that Page
+// into a Policy. Policies never contain 'unsafe-inline'. Inline scripts and
+// styles are allowed by hash, and inline code that can't be hashed is reported
+// as a Blocker.
 package minimalcsp
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
-	"log"
+	"maps"
+	"net/url"
 	"slices"
 	"strings"
 
-	"golang.org/x/net/html"
+	"golang.org/x/net/idna"
 )
 
-// attr returns the value of n's attribute with the given key, and whether n has it.
-func attr(n *html.Node, key string) (string, bool) {
-	for _, a := range n.Attr {
-		if a.Key == key {
-			return a.Val, true
-		}
-	}
-	return "", false
+// Reasons a page can't meet a strict policy.
+const (
+	ReasonEventHandler   = "inline event handler"
+	ReasonStyleAttribute = "style attribute"
+	ReasonJavaScriptURL  = "javascript: URL"
+)
+
+// Finding is something a page needs its policy to allow. It holds either a
+// resource's URL or the text of an inline script or style.
+type Finding struct {
+	Directive string   // The directive that governs it, such as "img-src".
+	URL       *url.URL // The resource's absolute URL, or nil for inline code.
+	Code      string   // The inline code, exactly as the browser sees it.
 }
 
-// runsAsScript reports whether a script element with the given type attribute
-// executes. Other types are data blocks, such as JSON-LD, which CSP doesn't
-// restrict. Every JavaScript MIME type contains "script".
-func runsAsScript(scriptType string) bool {
-	t := strings.ToLower(strings.TrimSpace(scriptType))
-	return t == "" || t == "module" || t == "importmap" || strings.Contains(t, "script")
+// Blocker is inline code that a strict policy will block and that can't be
+// allowed by hash, so the page has to change.
+type Blocker struct {
+	Reason  string // One of the Reason constants.
+	Element string // The element's tag name.
+	Attr    string // The attribute's name.
+	Value   string // The attribute's value.
 }
 
-// GetSources returns slices of the discovered src attributes for each of the CSP types.
-func GetSources(s string) [][]string {
-
-	// Tags to handle
-	// 	canvas
-	// 	figure
-
-	var sources = [][]string{}
-
-	doc, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		log.Fatal(err)
+func (b Blocker) String() string {
+	value := b.Value
+	if r := []rune(value); len(r) > 60 {
+		value = string(r[:60]) + "..."
 	}
-
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		switch {
-		case n.Type != html.ElementNode:
-			// Text and comments can have the same Data as a tag name.
-		case n.Data == "link":
-			href, ok := attr(n, "href")
-			if !ok {
-				break
-			}
-			rel, _ := attr(n, "rel")
-			for _, token := range strings.Fields(strings.ToLower(rel)) {
-				switch token {
-				case "stylesheet":
-					sources = append(sources, []string{"style-src", href})
-				case "icon":
-					sources = append(sources, []string{"img-src", href})
-				}
-			}
-		case n.Data == "script":
-			scriptType, _ := attr(n, "type")
-			if src, ok := attr(n, "src"); ok {
-				sources = append(sources, []string{"script-src", src})
-			} else if n.FirstChild != nil && runsAsScript(scriptType) {
-				sources = append(sources, []string{"script-src", "unsafe-inline"})
-			}
-		case n.Data == "style":
-			styleType, _ := attr(n, "type")
-			isCSS := styleType == "" || strings.EqualFold(styleType, "text/css")
-			if n.FirstChild != nil && isCSS {
-				sources = append(sources, []string{"style-src", "unsafe-inline"})
-			}
-		case n.Data == "img":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"img-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "embed":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"object-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "object":
-			for _, a := range n.Attr {
-				if a.Key == "data" {
-					tuple := []string{"object-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "canvas":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"img-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "figure":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"img-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "form":
-			for _, a := range n.Attr {
-				if a.Key == "action" {
-					tuple := []string{"form-action", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "iframe":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"child-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "source":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"media-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "audio":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"media-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-		case n.Data == "video":
-			for _, a := range n.Attr {
-				if a.Key == "src" {
-					tuple := []string{"media-src", a.Val}
-					sources = append(sources, tuple)
-				}
-			}
-
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-	}
-	f(doc)
-	return sources
+	return fmt.Sprintf("%s: <%s %s=%q>", b.Reason, b.Element, b.Attr, value)
 }
 
-// MakePolicy groups the page's sources by directive, removes duplicates, and
-// prints the policy to StdOut.
-func MakePolicy(s string) {
-	var directives []string
+// Page is what a Collector learned about a webpage.
+type Page struct {
+	URL      *url.URL
+	Findings []Finding
+	Blockers []Blocker
+	Warnings []string
+}
+
+// Collector gathers what a page needs. Implementations differ in what they can
+// see, but they all feed the same call to Build.
+type Collector interface {
+	Collect(ctx context.Context, pageURL string) (*Page, error)
+}
+
+// Options controls how Build reduces resources to sources.
+type Options struct {
+	// ExactPaths lists resources by URL rather than by origin. This is tighter
+	// but needs regenerating whenever a resource moves.
+	ExactPaths bool
+}
+
+// Directive is one entry in a policy.
+type Directive struct {
+	Name    string
+	Sources []string
+}
+
+// Policy is a Content Security Policy, with anything the caller needs to know
+// before deploying it.
+type Policy struct {
+	Directives []Directive
+	Blockers   []Blocker // Inline code this policy blocks.
+	Warnings   []string  // Weaknesses in the policy or gaps in what was seen.
+}
+
+// String returns the policy as a Content-Security-Policy header value.
+func (p *Policy) String() string {
+	parts := make([]string, len(p.Directives))
+	for i, d := range p.Directives {
+		parts[i] = d.Name + " " + strings.Join(d.Sources, " ")
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Build returns the tightest policy that allows everything in page. It denies
+// by default, and its output doesn't depend on the order of the findings.
+func Build(page *Page, opts Options) *Policy {
+	policy := &Policy{Warnings: slices.Clone(page.Warnings)}
+	for _, b := range page.Blockers {
+		if !slices.Contains(policy.Blockers, b) {
+			policy.Blockers = append(policy.Blockers, b)
+		}
+	}
+
 	sources := map[string][]string{}
-	for _, a := range GetSources(s) {
-		directive, source := a[0], a[1]
-		if source == "unsafe-inline" {
-			source = "'unsafe-inline'"
+	for _, f := range page.Findings {
+		source := sourceFor(f, page.URL, opts)
+		if slices.Contains(sources[f.Directive], source) {
+			continue
 		}
-		if _, seen := sources[directive]; !seen {
-			directives = append(directives, directive)
-		}
-		if !slices.Contains(sources[directive], source) {
-			sources[directive] = append(sources[directive], source)
+		sources[f.Directive] = append(sources[f.Directive], source)
+		if f.Directive == "script-src" && f.URL != nil {
+			policy.Warnings = append(policy.Warnings, scriptWarning(source))
 		}
 	}
 
-	var policy []string
-	for _, directive := range directives {
-		policy = append(policy, directive+" "+strings.Join(sources[directive], " "))
+	// These come first and are always present. default-src doesn't cover
+	// base-uri or form-action, so leaving them out would allow anything.
+	for _, name := range []string{"default-src", "base-uri", "form-action", "object-src"} {
+		list := sources[name]
+		delete(sources, name)
+		if len(list) == 0 {
+			list = []string{"'none'"}
+		}
+		slices.Sort(list)
+		policy.Directives = append(policy.Directives, Directive{name, list})
 	}
-	fmt.Println(strings.Join(policy, "; "))
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		slices.Sort(sources[name])
+		policy.Directives = append(policy.Directives, Directive{name, sources[name]})
+	}
+	return policy
+}
 
-	// Directives to handle.
-	// 	base-uri
-	// 	child-src - iframe
-	// 	connect-src - xmlhttprequest, websocket, eventsource
-	// 	default-src
-	// 	font-src - @font-face
-	// 	form-action - form
-	// 	img-src - img, link rel="icon or favicon"
-	// 	manifest-src
-	// 	media-src audio video
-	// 	object-src object embed applet
-	// 	plugin-types
-	// 	referrer
-	// 	reflected-xss
-	// 	report-uri
-	// 	sandbox
-	// 	script-src
-	// 	style-src style and style attributes
-	// 	upgrade-insecure-requests
+// sourceFor returns the CSP source expression that allows f.
+func sourceFor(f Finding, page *url.URL, opts Options) string {
+	if f.URL == nil {
+		sum := sha256.Sum256([]byte(f.Code))
+		return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	}
+	switch f.URL.Scheme {
+	case "http", "https", "ws", "wss":
+	default:
+		return f.URL.Scheme + ":"
+	}
+	// Scripts are always exact, since an origin would allow every script on it.
+	if opts.ExactPaths || f.Directive == "script-src" {
+		return exactSource(f.URL)
+	}
+	if origin(f.URL) == origin(page) {
+		return "'self'"
+	}
+	return origin(f.URL)
+}
 
+// origin returns u's scheme, host and non-default port in the form CSP expects.
+func origin(u *url.URL) string {
+	host := strings.ToLower(u.Hostname())
+	if ascii, err := idna.ToASCII(host); err == nil {
+		host = ascii
+	}
+	port := u.Port()
+	switch {
+	case port == "":
+	case port == "80" && (u.Scheme == "http" || u.Scheme == "ws"):
+	case port == "443" && (u.Scheme == "https" || u.Scheme == "wss"):
+	default:
+		host += ":" + port
+	}
+	return u.Scheme + "://" + host
+}
+
+// pathEscaper encodes the characters that end a CSP source expression.
+var pathEscaper = strings.NewReplacer(";", "%3B", ",", "%2C")
+
+// exactSource returns u without its query or fragment, which CSP doesn't allow.
+func exactSource(u *url.URL) string {
+	return origin(u) + pathEscaper.Replace(u.EscapedPath())
+}
+
+func scriptWarning(source string) string {
+	if strings.HasSuffix(source, ":") {
+		return fmt.Sprintf("script-src allows the %s scheme, which lets an attacker supply script content", source)
+	}
+	return fmt.Sprintf("script-src allows %s by URL, which is weaker than a hash or nonce", source)
 }
