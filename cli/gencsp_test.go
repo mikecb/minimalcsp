@@ -30,20 +30,54 @@ func gencsp(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	return out.String(), errOut.String(), err
 }
 
-func TestFetchesPageAndPrintsSources(t *testing.T) {
+func serve(t *testing.T, body string) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`<img src="a.png"><script src="b.js"></script>`))
+		w.Write([]byte(body))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
+func TestPrintsPolicyAlone(t *testing.T) {
+	srv := serve(t, `<img src="a.png">`)
 	stdout, stderr, err := gencsp(t, srv.URL)
 	if err != nil {
 		t.Fatalf("gencsp failed: %v\n%s", err, stderr)
 	}
-	for _, want := range []string{"img-src a.png", "script-src b.js"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("output %q is missing %q", stdout, want)
+	want := "default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src 'self'\n"
+	if stdout != want {
+		t.Errorf("stdout\n got %q\nwant %q", stdout, want)
+	}
+	if stderr != "" {
+		t.Errorf("unexpected stderr: %s", stderr)
+	}
+}
+
+func TestExactPathsFlag(t *testing.T) {
+	srv := serve(t, `<img src="/a.png">`)
+	stdout, stderr, err := gencsp(t, "-exact-paths", srv.URL)
+	if err != nil {
+		t.Fatalf("gencsp failed: %v\n%s", err, stderr)
+	}
+	if want := "img-src " + srv.URL + "/a.png"; !strings.Contains(stdout, want) {
+		t.Errorf("output %q is missing %q", stdout, want)
+	}
+}
+
+func TestReportsWarningsAndBlockersOnStderr(t *testing.T) {
+	srv := serve(t, `<script src="/a.js"></script><a onclick="b()">c</a>`)
+	stdout, stderr, err := gencsp(t, srv.URL)
+	if err != nil {
+		t.Fatalf("gencsp failed: %v\n%s", err, stderr)
+	}
+	for _, want := range []string{"warning: ", "/a.js by URL", `blocked: inline event handler: <a onclick="b()">`} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr is missing %q:\n%s", want, stderr)
 		}
+	}
+	if strings.Contains(stdout, "warning") || strings.Contains(stdout, "blocked") {
+		t.Errorf("stdout should hold only the policy: %q", stdout)
 	}
 }
 
@@ -81,7 +115,7 @@ func TestHTTPErrorStatusFails(t *testing.T) {
 	if err == nil {
 		t.Error("gencsp succeeded on a 404, want an error")
 	}
-	if strings.Contains(stdout, "error.png") {
-		t.Errorf("gencsp printed sources from an error page: %q", stdout)
+	if stdout != "" {
+		t.Errorf("gencsp printed a policy for an error page: %q", stdout)
 	}
 }
