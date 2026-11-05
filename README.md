@@ -29,10 +29,10 @@ The [roadmap](TODO.md) tracks what's left.
 | Finding resources | A headless browser, plus report-only collection from real traffic | Headless browser and HTML parsing built |
 | Checking policies | Load the page under the policy in report-only mode | Built |
 | Inline code | Hashes and nonces only, never `'unsafe-inline'` | Hashes built |
-| Scripts | Trusted by hash or nonce with `'strict-dynamic'`, not URL allowlists | Listed by exact URL with a warning for now |
+| Scripts | Trusted by hash or nonce with `'strict-dynamic'`, not URL allowlists | Built, with URLs as an explicit option |
 | Other resources | Origins by default, with exact paths as an option | Built |
-| Static sites | Hashes, delivered in a header or a `<meta>` tag | Header value built |
-| Dynamic servers | Nonces, with middleware for Go servers | Planned |
+| Static sites | Hashes with `integrity` attributes, delivered in a header or a `<meta>` tag | Header value built |
+| Dynamic servers | Nonces, with middleware for Go servers | Built |
 | Unfixable inline code | Event handlers, `style` attributes, `javascript:` URLs and `eval` are reported for the site to fix | Built |
 | Interfaces | A Go library first, with a CLI and CI check built on it | Library and CLIs built |
 
@@ -56,29 +56,64 @@ go -C browser run ./cmd/gencsp https://example.com
 This runs the page in headless Chrome and prints a policy on stdout:
 
 ```text
-default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src data:; script-src https://example.com/s.js; style-src 'sha256-zQhcS0BkpPhIWxF5sE2D1PEgBIvlKsPn21RDpgKhXxM='
+default-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src data:; script-src 'sha256-U17yw0JanRIUvNGo1UMNkEREE15IpPETuh5vbimSWwo='; style-src 'sha256-zQhcS0BkpPhIWxF5sE2D1PEgBIvlKsPn21RDpgKhXxM='
 ```
 
-It then loads the page again under that policy. Anything you should know goes to stderr:
+It then loads the page again under that policy, with any changes the policy needs already made to the page. Anything you should know goes to stderr:
 
 ```text
-warning: script-src allows https://example.com/s.js by URL, which is weaker than a hash or nonce
+change: https://example.com/s.js needs integrity="sha256-U17yw0JanRIUvNGo1UMNkEREE15IpPETuh5vbimSWwo="
+warning: couldn't hash https://example.com/late.js, so the policy will block it
 blocked: inline event handler: <p onclick="go()">
 violation: https://example.com/: img-src blocked https://example.com/late.png
 ```
 
+- `change:` lines are what the page needs before you deploy the policy.
 - `warning:` lines are weaknesses in the policy, or gaps in what was seen.
 - `blocked:` lines are inline code that the policy blocks and that has to change.
 - `violation:` lines are anything else the page did that the policy didn't allow. Any of these make the command exit with status 1.
 
 | Flag | Effect |
 |---|---|
+| `-scripts mode` | How to trust scripts: `hash`, `nonce` or `url`. See [Choosing how to trust scripts](#choosing-how-to-trust-scripts) |
 | `-pages n` | Crawl up to `n` pages on the same origin, and build one policy for all of them |
 | `-exact-paths` | List resources by URL rather than by origin, which is tighter but needs regenerating whenever a resource moves |
 | `-no-verify` | Don't load the page again under the policy |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
 
-`go run ./cli <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so.
+`go run ./cli <url>` from the repository root does the same without a browser, by reading only the HTML. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
+
+### Choosing how to trust scripts
+
+| | `hash` (the default) | `nonce` | `url` |
+|---|---|---|---|
+| Use it for | Static sites | Sites with a server | Trying a policy on a page you can't change yet |
+| Page changes | `integrity` attributes, which `Policy.Apply` adds | A nonce on every `<script>` in your templates | None |
+| Scripts that change | Need a new policy | Keep working | Keep working |
+| Cross-origin scripts | Need CORS | Keep working | Keep working |
+| `import` and `import()` | Blocked | Keep working | Keep working |
+| Strength | Strong | Strong | Weak: anything an attacker gets onto a listed URL runs |
+
+Scripts added by trusted scripts don't need listing. `'strict-dynamic'` trusts them, and it's in the policy only if the page needs it. The `hash` and `nonce` modes need Chrome 59, Firefox 116 or Safari 15.6, or later.
+
+If verifying fails under `hash` because scripts use `import`, switch to `nonce`.
+
+### Nonces on a Go server
+
+```go
+policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByNonce})
+handler := minimalcsp.NonceMiddleware{Policy: policy}.Wrap(mux)
+```
+
+Each response gets a new nonce. Templates add it with `minimalcsp.Nonce(r.Context())`:
+
+```html
+<script nonce="{{.Nonce}}" src="/app.js"></script>
+```
+
+Put nonces in your templates, not in a filter that rewrites responses. A filter would give a nonce to every script in the page, including one an attacker managed to inject, which defeats the policy. Don't cache pages that use nonces.
+
+For other servers, `-scripts nonce` prints the policy with `{nonce}` where each response's nonce goes.
 
 ### Library
 
@@ -90,14 +125,19 @@ if err != nil {
 }
 policy := minimalcsp.Build(page, minimalcsp.Options{})
 
-violations, err := collector.Verify(ctx, policy.String(), "https://example.com")
+violations, err := collector.VerifyPolicy(ctx, policy, "https://example.com")
 if err != nil {
 	return err
 }
 for _, violation := range violations {
 	log.Println(violation)
 }
+
+// Add the integrity attributes the policy needs to a page.
+updated := policy.Apply(document, pageURL)
 ```
+
+`Apply` changes nothing else in the page, so it's safe to run in a build step. `collector.Verify` checks a policy string against a page as it stands.
 
 Use `collector.Crawl` with `minimalcsp.Merge` to cover several pages. To reach resources behind a click or a login, set `collector.Actions` to [chromedp](https://github.com/chromedp/chromedp) actions, which run on each page after it loads.
 
@@ -107,8 +147,9 @@ Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have th
 
 - A run only sees what the page does during that run. Add `Actions` to reach resources behind interaction, and try the policy in report-only mode with real traffic.
 - Hashes match a page's exact inline code, so any change to it means generating a new policy. A page whose inline code differs on every load can't have a working hash-based policy, and verifying shows this.
-- External scripts are allowed by URL, which isn't as strong as a hash or nonce.
-- Code in closed shadow roots, and code that a script rewrites after it runs, can't be captured. Each case gets a warning.
+- Under `hash`, a script that changes needs a new policy, so scripts you don't control, such as analytics, can break the page without warning. Use `nonce` for those pages.
+- `'strict-dynamic'` doesn't trust scripts added through `document.write` or other parser-inserted routes. Verifying reports these, and they have to change.
+- Code in closed shadow roots, and code that a script added and that then rewrote itself, can't be captured. Each case gets a warning.
 - To collect a site on a private network, turn off Chrome's `LocalNetworkAccessChecks` feature in `Options`. Otherwise Chrome blocks what the page loads, which shows up as warnings. Loopback addresses aren't affected.
 
 ## Development

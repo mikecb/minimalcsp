@@ -55,8 +55,9 @@ func policyFor(t *testing.T, input string, opts minimalcsp.Options) *minimalcsp.
 // and exist separately from the code that generates sources.
 var (
 	directiveName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-	keywordSource = regexp.MustCompile(`^'(self|none)'$`)
-	hashSource    = regexp.MustCompile(`^'sha256-[A-Za-z0-9+/]{43}='$`)
+	keywordSource = regexp.MustCompile(`^'(self|none|strict-dynamic)'$`)
+	hashSource    = regexp.MustCompile(`^'(sha256-[A-Za-z0-9+/]{43}=|sha384-[A-Za-z0-9+/]{64}|sha512-[A-Za-z0-9+/]{86}==)'$`)
+	nonceSource   = regexp.MustCompile(`^'nonce-[A-Za-z0-9+/_-]+={0,2}'$`)
 	schemeSource  = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:$`)
 	hostSource    = regexp.MustCompile(`^(https?|wss?)://[a-z0-9-]+(\.[a-z0-9-]+)*(:[0-9]+)?(/[A-Za-z0-9\-._~!$&'()*+=:@%/]*)?$`)
 )
@@ -81,7 +82,7 @@ func checkCSP(policy string) error {
 			if s == "'none'" && len(sources) > 1 {
 				return fmt.Errorf("%s combines 'none' with other sources", name)
 			}
-			if !keywordSource.MatchString(s) && !hashSource.MatchString(s) &&
+			if !keywordSource.MatchString(s) && !hashSource.MatchString(s) && !nonceSource.MatchString(s) &&
 				!schemeSource.MatchString(s) && !hostSource.MatchString(s) {
 				return fmt.Errorf("%s has bad source %q", name, s)
 			}
@@ -230,7 +231,7 @@ func TestBuild(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := policyFor(t, tt.input, minimalcsp.Options{})
+			policy := policyFor(t, tt.input, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 			if tt.want == "" {
 				if got := policy.String(); got != baseline {
 					t.Errorf("policy\n got %q\nwant %q", got, baseline)
@@ -246,7 +247,7 @@ func TestBuild(t *testing.T) {
 }
 
 func TestBuildNeverAllowsInlineByKeyword(t *testing.T) {
-	policy := policyFor(t, `<script>a()</script><style>b{}</style><a onclick="c()" style="d">e</a>`, minimalcsp.Options{})
+	policy := policyFor(t, `<script>a()</script><style>b{}</style><a onclick="c()" style="d">e</a>`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if strings.Contains(policy.String(), "unsafe") {
 		t.Errorf("policy %q contains an unsafe keyword", policy)
 	}
@@ -255,7 +256,7 @@ func TestBuildNeverAllowsInlineByKeyword(t *testing.T) {
 // This vector is the example in the CSP specification, so it pins the hash
 // format independently of how this file computes hashes.
 func TestBuildMatchesPublishedHash(t *testing.T) {
-	policy := policyFor(t, `<script>alert('Hello, world.');</script>`, minimalcsp.Options{})
+	policy := policyFor(t, `<script>alert('Hello, world.');</script>`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	want := "script-src 'sha256-qznLcsROx4GACP2dm0UCKCzCG+HiZ1guq6ZZDob/Tng='"
 	if !strings.Contains(policy.String(), want) {
 		t.Errorf("policy %q is missing %q", policy, want)
@@ -263,7 +264,7 @@ func TestBuildMatchesPublishedHash(t *testing.T) {
 }
 
 func TestBuildFormat(t *testing.T) {
-	policy := policyFor(t, `<style>a{}</style><img src="1.png"><script src="/2.js"></script><form></form>`, minimalcsp.Options{})
+	policy := policyFor(t, `<style>a{}</style><img src="1.png"><script src="/2.js"></script><form></form>`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	want := "default-src 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; " +
 		"img-src 'self'; script-src https://x.test/2.js; style-src " + hash("a{}")
 	if got := policy.String(); got != want {
@@ -272,8 +273,8 @@ func TestBuildFormat(t *testing.T) {
 }
 
 func TestBuildIgnoresDocumentOrder(t *testing.T) {
-	one := policyFor(t, `<img src="https://a.test/"><script>a()</script><img src="https://b.test/"><audio src="c"></audio>`, minimalcsp.Options{})
-	two := policyFor(t, `<audio src="c"></audio><img src="https://b.test/"><script>a()</script><img src="https://a.test/">`, minimalcsp.Options{})
+	one := policyFor(t, `<img src="https://a.test/"><script>a()</script><img src="https://b.test/"><audio src="c"></audio>`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
+	two := policyFor(t, `<audio src="c"></audio><img src="https://b.test/"><script>a()</script><img src="https://a.test/">`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if one.String() != two.String() {
 		t.Errorf("order changed the policy:\n%q\n%q", one, two)
 	}
@@ -288,7 +289,7 @@ func TestBuildExactPaths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := policyFor(t, tt.input, minimalcsp.Options{ExactPaths: true})
+			policy := policyFor(t, tt.input, minimalcsp.Options{Scripts: minimalcsp.ByURL, ExactPaths: true})
 			if !strings.Contains(policy.String(), tt.want) {
 				t.Errorf("policy %q is missing %q", policy, tt.want)
 			}
@@ -301,7 +302,7 @@ func TestBuildFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := minimalcsp.Build(parseAt(t, "https://mikecb.org/", string(input)), minimalcsp.Options{})
+	policy := minimalcsp.Build(parseAt(t, "https://mikecb.org/", string(input)), minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	script := hash("\nwindow.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)};ga.l=+new Date;\n" +
 		"ga('create', 'UA-42723924-1', 'auto');\nga('send', 'pageview');\n")
 	style := hash("\n.layout-transparent .mdl-layout__header,\n.layout-transparent .mdl-layout__drawer-button {\n" +
@@ -349,7 +350,7 @@ func TestBlockers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := policyFor(t, tt.input, minimalcsp.Options{}).Blockers
+			got := policyFor(t, tt.input, minimalcsp.Options{Scripts: minimalcsp.ByURL}).Blockers
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("blockers\n got %q\nwant %q", got, tt.want)
 			}
@@ -358,7 +359,7 @@ func TestBlockers(t *testing.T) {
 }
 
 func TestJavaScriptURLsAreNotSources(t *testing.T) {
-	policy := policyFor(t, `<iframe src="javascript:a()"></iframe><form action="javascript:b()"></form>`, minimalcsp.Options{})
+	policy := policyFor(t, `<iframe src="javascript:a()"></iframe><form action="javascript:b()"></form>`, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got := policy.String(); got != baseline {
 		t.Errorf("policy\n got %q\nwant %q", got, baseline)
 	}
@@ -392,7 +393,7 @@ func TestWarnings(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := policyFor(t, tt.input, minimalcsp.Options{}).Warnings
+			got := policyFor(t, tt.input, minimalcsp.Options{Scripts: minimalcsp.ByURL}).Warnings
 			if len(got) != len(tt.want) {
 				t.Fatalf("warnings\n got %q\nwant %q", got, tt.want)
 			}
@@ -447,7 +448,7 @@ func TestCollect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := minimalcsp.Build(page, minimalcsp.Options{}).String(); got != baseline+"; img-src 'self'" {
+	if got := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL}).String(); got != baseline+"; img-src 'self'" {
 		t.Errorf("unexpected policy %q", got)
 	}
 }
@@ -458,7 +459,7 @@ func TestCollectEmptyPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := minimalcsp.Build(page, minimalcsp.Options{}).String(); got != baseline {
+	if got := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL}).String(); got != baseline {
 		t.Errorf("unexpected policy %q", got)
 	}
 }
@@ -498,7 +499,7 @@ func TestCollectUsesFinalURLAfterRedirect(t *testing.T) {
 	if got, want := page.URL.String(), final.URL+"/page"; got != want {
 		t.Errorf("page URL is %q, want %q", got, want)
 	}
-	if got := minimalcsp.Build(page, minimalcsp.Options{}).String(); !strings.HasSuffix(got, "img-src 'self'") {
+	if got := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL}).String(); !strings.HasSuffix(got, "img-src 'self'") {
 		t.Errorf("policy %q doesn't treat the final URL as 'self'", got)
 	}
 }
@@ -509,7 +510,7 @@ func TestCollectDecodesCharset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := minimalcsp.Build(page, minimalcsp.Options{}).String()
+	policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL}).String()
 	if want := hash(`a("é")`); !strings.Contains(policy, want) {
 		t.Errorf("policy %q is missing %s", policy, want)
 	}
@@ -595,7 +596,7 @@ func TestIncomplete(t *testing.T) {
 			if page.Incomplete != tt.want {
 				t.Errorf("Incomplete = %v, want %v", page.Incomplete, tt.want)
 			}
-			warned := slices.ContainsFunc(minimalcsp.Build(page, minimalcsp.Options{}).Warnings, func(w string) bool {
+			warned := slices.ContainsFunc(minimalcsp.Build(page, minimalcsp.Options{Scripts: minimalcsp.ByURL}).Warnings, func(w string) bool {
 				return strings.Contains(w, warning)
 			})
 			if warned != tt.want {
@@ -639,7 +640,7 @@ func TestMerge(t *testing.T) {
 		t.Error("neither page is incomplete")
 	}
 
-	policy := minimalcsp.Build(merged, minimalcsp.Options{})
+	policy := minimalcsp.Build(merged, minimalcsp.Options{Scripts: minimalcsp.ByURL})
 	if got, want := policy.String(), baseline+"; img-src 'self' https://cdn.test"; got != want {
 		t.Errorf("policy = %q, want %q", got, want)
 	}

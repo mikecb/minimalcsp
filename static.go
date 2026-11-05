@@ -177,7 +177,12 @@ func (p *parser) link(n *html.Node) {
 
 func (p *parser) script(n *html.Node) {
 	if _, ok := attr(n, "src"); ok {
+		found := len(p.page.Findings)
 		p.addURL(n, "src", "script-src")
+		if len(p.page.Findings) > found {
+			integrity, _ := attr(n, "integrity")
+			p.page.Findings[found].Hashes = integrityHashes(integrity)
+		}
 		p.page.Incomplete = true
 		return
 	}
@@ -185,6 +190,19 @@ func (p *parser) script(n *html.Node) {
 	if runsAsScript(scriptType) {
 		p.addInline(n, "script-src")
 	}
+}
+
+// integrityHashes returns the hash expressions in an integrity attribute,
+// without the options that can follow each one.
+func integrityHashes(integrity string) []string {
+	var hashes []string
+	for _, hash := range strings.Fields(integrity) {
+		hash, _, _ = strings.Cut(hash, "?")
+		if strings.HasPrefix(hash, "sha256-") || strings.HasPrefix(hash, "sha384-") || strings.HasPrefix(hash, "sha512-") {
+			hashes = append(hashes, hash)
+		}
+	}
+	return hashes
 }
 
 // addURL records the resource in n's attribute, if it has one that loads anything.
