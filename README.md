@@ -41,27 +41,24 @@ Requires Go 1.27.3 or later.
 go run ./cli https://example.com
 ```
 
-This fetches the page and prints what it found. Output currently looks like this, which is a list of findings rather than a usable policy:
+This fetches the page and prints a draft policy built from what it found:
 
 ```text
-[img-src data:, style-src unsafe-inline script-src /s.js]
+img-src data:,; style-src 'unsafe-inline'; script-src /s.js
 ```
 
-It reads only the HTML of the page you give it, so it can't see anything loaded later, such as fonts referenced from CSS or requests made by scripts.
+The output has the right shape, but it isn't usable yet:
+
+- Relative paths like `/s.js` aren't valid CSP sources.
+- `data:,` contains a comma, which splits a header into two policies.
+- Inline code still produces `'unsafe-inline'`, which [phase 2](TODO.md#phase-2-library-core) replaces with hashes.
+- It reads only the HTML of the page you give it, so it can't see anything loaded later, such as fonts referenced from CSS or requests made by scripts.
 
 ## Development
 
 ```bash
 go test ./...
 ```
-
-Some tests assert correct behavior that the code doesn't have yet. They skip with a `known bug` reason, so the suite stays green. To run them and see them fail:
-
-```bash
-MINIMALCSP_KNOWN_BUGS=1 go test ./...
-```
-
-When you fix a bug, delete the test's `knownBug` call so it becomes a regression test.
 
 ## License
 

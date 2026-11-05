@@ -30,13 +30,6 @@ func gencsp(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	return out.String(), errOut.String(), err
 }
 
-func knownBug(t *testing.T, reason string) {
-	t.Helper()
-	if os.Getenv("MINIMALCSP_KNOWN_BUGS") == "" {
-		t.Skip("known bug: " + reason)
-	}
-}
-
 func TestFetchesPageAndPrintsSources(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`<img src="a.png"><script src="b.js"></script>`))
@@ -65,7 +58,6 @@ func TestUnreachableURLFails(t *testing.T) {
 }
 
 func TestMissingURLReportsUsage(t *testing.T) {
-	knownBug(t, "no argument check, so os.Args[1] panics")
 	_, stderr, err := gencsp(t)
 	if err == nil {
 		t.Error("gencsp succeeded with no URL, want an error")
@@ -73,17 +65,23 @@ func TestMissingURLReportsUsage(t *testing.T) {
 	if strings.Contains(stderr, "panic:") {
 		t.Errorf("gencsp panicked instead of reporting usage:\n%s", stderr)
 	}
+	if !strings.Contains(stderr, "usage:") {
+		t.Errorf("stderr is missing usage text:\n%s", stderr)
+	}
 }
 
 func TestHTTPErrorStatusFails(t *testing.T) {
-	knownBug(t, "the HTTP status is ignored, so error pages are parsed as the target")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`<img src="error.png">`))
 	}))
 	defer srv.Close()
 
-	if _, _, err := gencsp(t, srv.URL); err == nil {
+	stdout, _, err := gencsp(t, srv.URL)
+	if err == nil {
 		t.Error("gencsp succeeded on a 404, want an error")
+	}
+	if strings.Contains(stdout, "error.png") {
+		t.Errorf("gencsp printed sources from an error page: %q", stdout)
 	}
 }

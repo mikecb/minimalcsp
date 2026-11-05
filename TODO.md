@@ -15,31 +15,29 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **Inline event handlers and `style` attributes:** these can't be hashed without `'unsafe-hashes'`. The proposal is to leave it off and report each one as a blocker for the site to fix.
 - **Browser dependency:** should the headless collector live in its own module, so that library users who don't need it avoid the dependency?
 
-## Phase 1: Fix known bugs
-
-Each of these has a skipped test.
+## Phase 1: Fix known bugs (done)
 
 Source detection (`GetSources`):
 
-- [ ] Report inline scripts as `script-src`, not `script`
-- [ ] Detect inline scripts that have attributes, such as `type`
-- [ ] Detect inline styles that have attributes, such as `media`
-- [ ] Check node types so text like `<p>script</p>` isn't treated as an element
-- [ ] Read `action` on `<form>`
-- [ ] Read `data` on `<object>`
-- [ ] Compare `rel` case-insensitively
+- [x] Report inline scripts as `script-src`, not `script`
+- [x] Detect inline scripts that have attributes, such as `type`
+- [x] Detect inline styles that have attributes, such as `media`
+- [x] Check node types so text like `<p>script</p>` isn't treated as an element
+- [x] Read `action` on `<form>`
+- [x] Read `data` on `<object>`
+- [x] Compare `rel` case-insensitively
 
 Policy output (`MakePolicy`):
 
-- [ ] Remove duplicate sources
-- [ ] Group sources under one entry per directive
-- [ ] Separate directives with semicolons instead of printing a Go slice
-- [ ] Single-quote keywords like `'self'`
+- [x] Remove duplicate sources
+- [x] Group sources under one entry per directive
+- [x] Separate directives with semicolons instead of printing a Go slice
+- [x] Single-quote keywords
 
 CLI:
 
-- [ ] Show usage instead of panicking when no URL is given
-- [ ] Fail on HTTP error statuses
+- [x] Show usage instead of panicking when no URL is given
+- [x] Fail on HTTP error statuses
 
 ## Phase 2: Library core
 
@@ -55,7 +53,7 @@ API:
 No `unsafe-inline`:
 
 - [ ] Replace the `unsafe-inline` marker in `GetSources` with the inline code itself
-- [ ] Update the tests that expect `unsafe-inline`: the `inline style` case, the fixture test, `TestMakePolicyQuotesKeywords` and the inline cases in `TestGetSourcesKnownBugs`
+- [ ] Update the tests that expect `unsafe-inline`: the inline cases in `TestGetSources`, `TestGetSourcesFixture`, `TestMakePolicyFormat` and `TestMakePolicyQuotesKeywords`
 - [ ] Generate `sha256` hashes for inline scripts and styles
 - [ ] Report inline event handlers, `style` attributes and `javascript:` URLs as blockers
 
@@ -114,7 +112,6 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 These can happen at any time.
 
 - [ ] Add CI that runs `go build`, `go vet` and `go test`
-- [ ] Normalize `minimalcsp.go` and `cli/gencsp.go` to LF so `gofmt` passes
 - [ ] Replace the deprecated `io/ioutil`
 - [ ] Remove the `canvas` and `figure` branches, since those elements have no `src`
 - [ ] Remove `plugin-types`, `referrer` and `reflected-xss` from the directive notes, since they're no longer part of CSP

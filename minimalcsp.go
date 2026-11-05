@@ -3,12 +3,31 @@ package minimalcsp
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
 )
 
-//GetSources returns slices of the discovered src attributes for each of the CSP types.
+// attr returns the value of n's attribute with the given key, and whether n has it.
+func attr(n *html.Node, key string) (string, bool) {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val, true
+		}
+	}
+	return "", false
+}
+
+// runsAsScript reports whether a script element with the given type attribute
+// executes. Other types are data blocks, such as JSON-LD, which CSP doesn't
+// restrict. Every JavaScript MIME type contains "script".
+func runsAsScript(scriptType string) bool {
+	t := strings.ToLower(strings.TrimSpace(scriptType))
+	return t == "" || t == "module" || t == "importmap" || strings.Contains(t, "script")
+}
+
+// GetSources returns slices of the discovered src attributes for each of the CSP types.
 func GetSources(s string) [][]string {
 
 	// Tags to handle
@@ -25,47 +44,34 @@ func GetSources(s string) [][]string {
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		switch {
+		case n.Type != html.ElementNode:
+			// Text and comments can have the same Data as a tag name.
 		case n.Data == "link":
-			for _, a := range n.Attr {
-				if a.Key == "rel" && a.Val == "stylesheet" {
-					for _, b := range n.Attr {
-						if b.Key == "href" {
-							tuple := []string{"style-src", b.Val}
-							sources = append(sources, tuple)
-						}
-					}
-				} else if a.Key == "rel" && a.Val == "icon" {
-					for _, b := range n.Attr {
-						if b.Key == "href" {
-							tuple := []string{"img-src", b.Val}
-							sources = append(sources, tuple)
-						}
-					}
-				} else if a.Key == "rel" && a.Val == "shortcut icon" {
-					for _, b := range n.Attr {
-						if b.Key == "href" {
-							tuple := []string{"img-src", b.Val}
-							sources = append(sources, tuple)
-						}
-					}
+			href, ok := attr(n, "href")
+			if !ok {
+				break
+			}
+			rel, _ := attr(n, "rel")
+			for _, token := range strings.Fields(strings.ToLower(rel)) {
+				switch token {
+				case "stylesheet":
+					sources = append(sources, []string{"style-src", href})
+				case "icon":
+					sources = append(sources, []string{"img-src", href})
 				}
 			}
 		case n.Data == "script":
-			if n.Attr == nil {
-				tuple := []string{n.Data, "unsafe-inline"}
-				sources = append(sources, tuple)
-			} else {
-				for _, a := range n.Attr {
-					if a.Key == "src" {
-						tuple := []string{"script-src", a.Val}
-						sources = append(sources, tuple)
-					}
-				}
+			scriptType, _ := attr(n, "type")
+			if src, ok := attr(n, "src"); ok {
+				sources = append(sources, []string{"script-src", src})
+			} else if n.FirstChild != nil && runsAsScript(scriptType) {
+				sources = append(sources, []string{"script-src", "unsafe-inline"})
 			}
 		case n.Data == "style":
-			if n.Attr == nil {
-				tuple := []string{"style-src", "unsafe-inline"}
-				sources = append(sources, tuple)
+			styleType, _ := attr(n, "type")
+			isCSS := styleType == "" || strings.EqualFold(styleType, "text/css")
+			if n.FirstChild != nil && isCSS {
+				sources = append(sources, []string{"style-src", "unsafe-inline"})
 			}
 		case n.Data == "img":
 			for _, a := range n.Attr {
@@ -83,7 +89,7 @@ func GetSources(s string) [][]string {
 			}
 		case n.Data == "object":
 			for _, a := range n.Attr {
-				if a.Key == "src" {
+				if a.Key == "data" {
 					tuple := []string{"object-src", a.Val}
 					sources = append(sources, tuple)
 				}
@@ -104,7 +110,7 @@ func GetSources(s string) [][]string {
 			}
 		case n.Data == "form":
 			for _, a := range n.Attr {
-				if a.Key == "src" {
+				if a.Key == "action" {
 					tuple := []string{"form-action", a.Val}
 					sources = append(sources, tuple)
 				}
@@ -147,14 +153,29 @@ func GetSources(s string) [][]string {
 	return sources
 }
 
-// MakePolicy parses the slice of sources, deduplicates, matches with CSP rule, and prints the policy to StdOut.
+// MakePolicy groups the page's sources by directive, removes duplicates, and
+// prints the policy to StdOut.
 func MakePolicy(s string) {
-	sources := GetSources(s)
-	var policy []string
-	for _, a := range sources {
-		policy = append(policy, strings.Join(a, " "))
+	var directives []string
+	sources := map[string][]string{}
+	for _, a := range GetSources(s) {
+		directive, source := a[0], a[1]
+		if source == "unsafe-inline" {
+			source = "'unsafe-inline'"
+		}
+		if _, seen := sources[directive]; !seen {
+			directives = append(directives, directive)
+		}
+		if !slices.Contains(sources[directive], source) {
+			sources[directive] = append(sources[directive], source)
+		}
 	}
-	fmt.Printf("%s", policy)
+
+	var policy []string
+	for _, directive := range directives {
+		policy = append(policy, directive+" "+strings.Join(sources[directive], " "))
+	}
+	fmt.Println(strings.Join(policy, "; "))
 
 	// Directives to handle.
 	// 	base-uri

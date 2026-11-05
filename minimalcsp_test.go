@@ -10,16 +10,6 @@ import (
 	"github.com/mikecb/minimalcsp"
 )
 
-// knownBug skips a test that asserts correct behavior the code does not have
-// yet. Set MINIMALCSP_KNOWN_BUGS=1 to run these tests and watch them fail.
-// Remove the call once the bug is fixed.
-func knownBug(t *testing.T, reason string) {
-	t.Helper()
-	if os.Getenv("MINIMALCSP_KNOWN_BUGS") == "" {
-		t.Skip("known bug: " + reason)
-	}
-}
-
 func checkSources(t *testing.T, input string, want [][]string) {
 	t.Helper()
 	got := minimalcsp.GetSources(input)
@@ -72,64 +62,70 @@ func TestGetSources(t *testing.T) {
 			[][]string{{"img-src", "1.png"}, {"script-src", "2.js"}, {"img-src", "3.png"}}},
 		{"duplicates are kept", `<img src="a.png"><img src="a.png">`,
 			[][]string{{"img-src", "a.png"}, {"img-src", "a.png"}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			checkSources(t, tt.input, tt.want)
-		})
-	}
-}
 
-func TestGetSourcesKnownBugs(t *testing.T) {
-	tests := []struct {
-		name   string
-		reason string
-		input  string
-		want   [][]string
-	}{
-		{"inline script directive", `reports "script" instead of "script-src"`,
-			`<script>a()</script>`,
+		// Inline scripts.
+		{"inline script", `<script>a()</script>`,
 			[][]string{{"script-src", "unsafe-inline"}}},
-		{"inline script with attribute", "only attribute-free scripts count as inline",
-			`<script type="text/javascript">a()</script>`,
+		{"inline script with javascript type", `<script type="text/javascript">a()</script>`,
 			[][]string{{"script-src", "unsafe-inline"}}},
-		{"inline style with attribute", "only attribute-free styles count as inline",
-			`<style media="print">a{}</style>`,
+		{"inline module script", `<script type="module">a()</script>`,
+			[][]string{{"script-src", "unsafe-inline"}}},
+		{"inline script with uppercase type", `<script type="TEXT/JAVASCRIPT">a()</script>`,
+			[][]string{{"script-src", "unsafe-inline"}}},
+		{"inline script with other attribute", `<script id="a">a()</script>`,
+			[][]string{{"script-src", "unsafe-inline"}}},
+		{"inline import map", `<script type="importmap">{}</script>`,
+			[][]string{{"script-src", "unsafe-inline"}}},
+		{"inline script with padded type", `<script type=" module ">a()</script>`,
+			[][]string{{"script-src", "unsafe-inline"}}},
+		{"json data block", `<script type="application/ld+json">{}</script>`, nil},
+		{"template data block", `<script type="text/template"><p></p></script>`, nil},
+		{"empty script", `<script></script>`, nil},
+		{"external script is not also inline", `<script src="a.js">ignored()</script>`,
+			[][]string{{"script-src", "a.js"}}},
+
+		// Inline styles.
+		{"inline style with attribute", `<style media="print">a{}</style>`,
 			[][]string{{"style-src", "unsafe-inline"}}},
-		{"text matching a tag name", "node type is not checked, so text counts as an element",
-			`<p>script</p><p>style</p>`, nil},
-		{"form action", "reads src instead of action",
-			`<form action="https://x.test/post"></form>`,
+		{"inline style with css type", `<style type="text/css">a{}</style>`,
+			[][]string{{"style-src", "unsafe-inline"}}},
+		{"style with non-css type", `<style type="text/x-less">a{}</style>`, nil},
+		{"empty style", `<style></style>`, nil},
+
+		// Only elements count.
+		{"text matching a tag name", `<p>script</p><p>style</p>`, nil},
+		{"comment matching a tag name", `<!--script-->`, nil},
+
+		// Attributes that hold the URL.
+		{"form action", `<form action="https://x.test/post"></form>`,
 			[][]string{{"form-action", "https://x.test/post"}}},
-		{"object data", "reads src instead of data",
-			`<object data="https://x.test/a.swf"></object>`,
+		{"object data", `<object data="https://x.test/a.swf"></object>`,
 			[][]string{{"object-src", "https://x.test/a.swf"}}},
-		{"rel is case-insensitive", "rel is compared case-sensitively",
-			`<link rel="Stylesheet" href="a.css">`,
+
+		// rel is a case-insensitive, space-separated list.
+		{"rel with other case", `<link rel="Stylesheet" href="a.css">`,
 			[][]string{{"style-src", "a.css"}}},
+		{"rel with several values", `<link rel="alternate stylesheet" href="a.css">`,
+			[][]string{{"style-src", "a.css"}}},
+		{"icon rel with other case", `<link rel="SHORTCUT Icon" href="a.ico">`,
+			[][]string{{"img-src", "a.ico"}}},
+		{"rel containing a value as a substring", `<link rel="apple-touch-icon" href="a.png">`, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			knownBug(t, tt.reason)
 			checkSources(t, tt.input, tt.want)
 		})
 	}
 }
 
 // TestGetSourcesFixture runs the mikecb.org homepage from the project's
-// original test. The "script" row is the known inline-script bug, so it is
-// dropped here rather than pinned as expected output.
+// original test.
 func TestGetSourcesFixture(t *testing.T) {
 	page, err := os.ReadFile("testdata/mikecb-org.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got [][]string
-	for _, row := range minimalcsp.GetSources(string(page)) {
-		if row[0] != "script" {
-			got = append(got, row)
-		}
-	}
+	got := minimalcsp.GetSources(string(page))
 	want := [][]string{
 		{"img-src", "images/favicon/favicon.ico"},
 		{"img-src", "images/favicon/favicon.ico"},
@@ -138,6 +134,7 @@ func TestGetSourcesFixture(t *testing.T) {
 		{"style-src", "stylesheets/icon.css"},
 		{"style-src", "https://fonts.googleapis.com/css?family=Open+Sans:300"},
 		{"style-src", "stylesheets/home.css"},
+		{"script-src", "unsafe-inline"},
 		{"script-src", "https://www.google-analytics.com/analytics.js"},
 		{"style-src", "unsafe-inline"},
 	}
@@ -177,7 +174,6 @@ func TestMakePolicyIncludesEverySource(t *testing.T) {
 }
 
 func TestMakePolicyDeduplicates(t *testing.T) {
-	knownBug(t, "MakePolicy does not deduplicate, despite its doc comment")
 	got := policyFor(t, `<img src="a.png"><img src="a.png">`)
 	if n := strings.Count(got, "a.png"); n != 1 {
 		t.Errorf("a.png appears %d times in %q, want 1", n, got)
@@ -185,7 +181,6 @@ func TestMakePolicyDeduplicates(t *testing.T) {
 }
 
 func TestMakePolicyGroupsDirectives(t *testing.T) {
-	knownBug(t, "MakePolicy repeats a directive for each source")
 	got := policyFor(t, `<img src="a.png"><img src="b.png">`)
 	if n := strings.Count(got, "img-src"); n != 1 {
 		t.Errorf("img-src appears %d times in %q, want 1", n, got)
@@ -193,15 +188,21 @@ func TestMakePolicyGroupsDirectives(t *testing.T) {
 }
 
 func TestMakePolicyIsNotAGoSlice(t *testing.T) {
-	knownBug(t, "MakePolicy prints a Go slice instead of a CSP header value")
 	got := policyFor(t, `<img src="a.png"><script src="b.js"></script>`)
 	if strings.HasPrefix(got, "[") || !strings.Contains(got, ";") {
 		t.Errorf("policy %q is not semicolon-separated CSP", got)
 	}
 }
 
+func TestMakePolicyFormat(t *testing.T) {
+	got := policyFor(t, `<img src="1.png"><script src="2.js"></script><img src="3.png"><img src="1.png"><style>a{}</style>`)
+	want := "img-src 1.png 3.png; script-src 2.js; style-src 'unsafe-inline'\n"
+	if got != want {
+		t.Errorf("policy\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestMakePolicyQuotesKeywords(t *testing.T) {
-	knownBug(t, "CSP keywords must be single-quoted")
 	got := policyFor(t, `<style>a{}</style>`)
 	if !strings.Contains(got, "'unsafe-inline'") {
 		t.Errorf("policy %q does not quote 'unsafe-inline'", got)
