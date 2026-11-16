@@ -38,7 +38,7 @@ The [roadmap](TODO.md) tracks what's left.
 
 ## Usage
 
-Requires Go 1.27.3 or later. The browser collector also needs Chrome or Chromium.
+Requires Go 1.27.4 or later. The browser collector also needs Chrome or Chromium.
 
 The repository has two Go modules, so that users of the library don't depend on a browser driver:
 
