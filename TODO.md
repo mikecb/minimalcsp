@@ -121,7 +121,7 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 
 ## Phase 7: Compromised third-party scripts
 
-In November 2026, attackers changed the Optimizely snippets of about 178 sites. The code ran from a URL each site already trusted, so the question is what a policy still stops once a trusted script turns hostile. [Stopping a poisoned third-party script](docs/blog/optimizely.md) has the tests behind this list: a local page with a poisoned vendor script, and the home pages of eleven affected sites.
+In November 2026, attackers changed the Optimizely snippets of about 178 sites. The code ran from a URL each site already trusted, so the question is what a policy still stops once a trusted script turns hostile. This list comes from two tests: a local page with a poisoned vendor script, and `gencsp` run against the home pages of eleven affected sites.
 
 What the policy trusts:
 
