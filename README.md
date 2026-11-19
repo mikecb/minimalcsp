@@ -127,7 +127,7 @@ The policy runs in report-only mode, so one blocked resource can't hide what dep
 | `import` and `import()` | Blocked | Keep working | Keep working |
 | Strength | Strong | Strong | Weak: anything an attacker gets onto a listed URL runs |
 
-Scripts added by trusted scripts don't need listing. `'strict-dynamic'` trusts them, and it's in the policy only if the page needs it. The `hash` and `nonce` modes need Chrome 59, Firefox 116 or Safari 15.6, or later.
+Scripts added by trusted scripts don't need listing. `'strict-dynamic'` trusts them, and it's in the policy only if the page needs it. It also lets every trusted script load others from anywhere. Under `hash`, a script that changes is blocked before it can. Under `nonce`, it isn't, so `Warnings` names each other host whose scripts get that trust. If one of those hosts is compromised, its code can bring in more, though the rest of the policy still limits where it can send data. The `hash` and `nonce` modes need Chrome 59, Firefox 116 or Safari 15.6, or later.
 
 If a policy lists hosts, `Warnings` names any source that lets injected markup run code: hosts with JSONP endpoints, hosts serving AngularJS, hosts where anyone can publish files, such as public CDNs, and anything that covers one of those, such as a wildcard. An exact URL on a public CDN is fine, but listing the whole host isn't, even if the page loads only one file from it. `Build` gives these warnings for the `url` mode, and `minimalcsp.ParsePolicy` gives them for a policy you already have. Browsers ignore host sources in a policy with `'strict-dynamic'`, so those policies get no warning.
 
