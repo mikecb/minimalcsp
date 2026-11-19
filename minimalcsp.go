@@ -333,6 +333,7 @@ func (p *Policy) trustScripts(page *Page, trust ScriptTrust) []string {
 		}
 	}
 	var hasScripts, hasLoaded bool
+	var elsewhere []string
 	for _, f := range page.Findings {
 		if f.Directive != "script-src" {
 			continue
@@ -342,6 +343,9 @@ func (p *Policy) trustScripts(page *Page, trust ScriptTrust) []string {
 		case f.Loaded:
 			hasLoaded = true
 		case trust == ByNonce:
+			if f.URL != nil && origin(f.URL) != origin(page.URL) && !slices.Contains(elsewhere, origin(f.URL)) {
+				elsewhere = append(elsewhere, origin(f.URL))
+			}
 		case f.URL == nil:
 			add(sourceFor(f, page.URL, Options{}))
 		case len(f.Hashes) == 0:
@@ -364,6 +368,13 @@ func (p *Policy) trustScripts(page *Page, trust ScriptTrust) []string {
 	}
 	if hasLoaded {
 		add("'strict-dynamic'")
+		// A hash stops a script that changes. A nonce doesn't, so these
+		// scripts can bring in anything if their host is compromised.
+		slices.Sort(elsewhere)
+		for _, host := range elsewhere {
+			p.Warnings = append(p.Warnings, fmt.Sprintf(
+				"a nonce trusts the scripts from %s whatever they contain, and 'strict-dynamic' lets them load scripts from anywhere, so if that host is compromised, the policy won't stop its code", host))
+		}
 	}
 	return sources
 }

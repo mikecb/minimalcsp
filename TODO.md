@@ -126,7 +126,7 @@ In November 2026, attackers changed the Optimizely snippets of about 178 sites. 
 
 What the policy trusts:
 
-- [ ] Warn when `'strict-dynamic'` is in a policy because of a script from another origin, and name that script. All seven policies generated for affected sites had it, and it's what lets a poisoned script load a second one from anywhere
+- [x] Warn when a policy with a nonce and `'strict-dynamic'` trusts scripts from another host, and name the host. All seven policies generated for affected sites had `'strict-dynamic'`, and it's what lets a poisoned script load a second one from anywhere
 - [ ] Say which scripts need `'strict-dynamic'`, so a site can see what removing one would buy
 - [x] Mix the modes: pin chosen third-party scripts by hash on a page that uses nonces. An `integrity` attribute does this beside a nonce with no change to the policy, and the review skill picks the scripts
 - [ ] Add a command that saves a copy of a vendor script for the site to serve itself, with its hash, so the script changes only when someone reviews it
@@ -135,7 +135,7 @@ What the policy trusts:
 
 Noticing a compromise:
 
-- [ ] Have `gencsp verify` report requests that Chrome itself blocked. It drops them, so a page whose scripts never ran reports 0 violations
+- [x] Have `gencsp verify` report requests that Chrome itself blocked. It dropped them, so a page whose scripts never ran reported 0 violations
 - [ ] Document running `gencsp verify` on a schedule against the live site. In testing it caught each poisoned script that made a request the policy doesn't allow
 - [ ] Have `Tally` separate a source that suddenly appears across many clients from one that was always missing. The first is what an attack looks like
 - [ ] Add the poisoned-script page to the browser tests, covering each mode

@@ -153,6 +153,24 @@ func (c Collector) Collect(ctx context.Context, pageURL string) (*minimalcsp.Pag
 // with no nonce, every script gets one, as if the templates had been updated.
 // Any report-uri and report-to are left out, so nothing gets sent to them.
 func (c Collector) Verify(ctx context.Context, policy string, pageURLs ...string) ([]Violation, error) {
+	checked, err := c.verify(ctx, policy, nil, pageURLs)
+	return checked.Violations, err
+}
+
+// Checked is what Check found.
+type Checked struct {
+	// Violations are everything the policy would block.
+	Violations []Violation
+
+	// Warnings are gaps in the check, such as a request that Chrome itself
+	// refused, whatever the policy. Whatever depended on it never happened, so
+	// no violations doesn't mean the policy allows everything the page needs.
+	Warnings []string
+}
+
+// Check is Verify, with warnings about anything it couldn't check. A page whose
+// scripts Chrome refused to load has no violations, because it did nothing.
+func (c Collector) Check(ctx context.Context, policy string, pageURLs ...string) (Checked, error) {
 	return c.verify(ctx, policy, nil, pageURLs)
 }
 
@@ -161,7 +179,8 @@ func (c Collector) Verify(ctx context.Context, policy string, pageURLs ...string
 // changes are made. A script that fails because of them has a Violation with
 // the directive "integrity".
 func (c Collector) VerifyPolicy(ctx context.Context, policy *minimalcsp.Policy, pageURLs ...string) ([]Violation, error) {
-	return c.verify(ctx, policy.String(), policy.Apply, pageURLs)
+	checked, err := c.verify(ctx, policy.String(), policy.Apply, pageURLs)
+	return checked.Violations, err
 }
 
 // VerifyMeta loads each page with policy in a <meta> tag, as minimalcsp's
@@ -171,29 +190,38 @@ func (c Collector) VerifyPolicy(ctx context.Context, policy *minimalcsp.Policy, 
 // It doesn't suit a ByNonce policy.
 func (c Collector) VerifyMeta(ctx context.Context, policy *minimalcsp.Policy, pageURLs ...string) ([]Violation, error) {
 	sampled := withSamples(policy.String())
-	return c.verify(ctx, "", func(document []byte, pageURL *url.URL) []byte {
+	checked, err := c.verify(ctx, "", func(document []byte, pageURL *url.URL) []byte {
 		return minimalcsp.InsertMeta(policy.Apply(document, pageURL), sampled)
 	}, pageURLs)
+	return checked.Violations, err
 }
 
-func (c Collector) verify(ctx context.Context, policy string, rewrite rewriter, pageURLs []string) ([]Violation, error) {
+func (c Collector) verify(ctx context.Context, policy string, rewrite rewriter, pageURLs []string) (Checked, error) {
 	browser, stop, err := c.start(ctx)
 	if err != nil {
-		return nil, err
+		return Checked{}, err
 	}
 	defer stop()
-	var violations []Violation
+	var checked Checked
 	for _, pageURL := range pageURLs {
 		loaded, err := c.load(browser, pageURL, withSamples(withoutReporting(policy)), rewrite)
 		if err != nil {
-			return nil, err
+			return Checked{}, err
 		}
 		for _, v := range loaded.violations {
 			v.Page = loaded.url
-			violations = append(violations, v)
+			checked.Violations = append(checked.Violations, v)
+		}
+		for _, blocked := range loaded.blocked {
+			checked.Warnings = append(checked.Warnings,
+				fmt.Sprintf("%s: Chrome blocked %s, so anything that depends on it wasn't checked", loaded.url, blocked))
+		}
+		if loaded.busy {
+			checked.Warnings = append(checked.Warnings,
+				fmt.Sprintf("%s: this page was still making requests when the check stopped, so it may do more", loaded.url))
 		}
 	}
-	return violations, nil
+	return checked, nil
 }
 
 // Crawl collects startURL and the pages it links to on the same origin, up to
