@@ -119,6 +119,36 @@ This catches what a crawl misses: real users, real browsers and logged-in pages.
 - [ ] Have the CI check fail on new blockers too
 - [ ] Publish a GitHub Action for the CI check
 
+## Phase 7: Compromised third-party scripts
+
+In November 2026, attackers changed the Optimizely snippets of about 178 sites. The code ran from a URL each site already trusted, so the question is what a policy still stops once a trusted script turns hostile. This list comes from two tests: a local page with a poisoned vendor script, and `gencsp` run against the home pages of eleven affected sites.
+
+What the policy trusts:
+
+- [ ] Warn when `'strict-dynamic'` is in a policy because of a script from another origin, and name that script. All seven policies generated for affected sites had it, and it's what lets a poisoned script load a second one from anywhere
+- [ ] Say which scripts need `'strict-dynamic'`, so a site can see what removing one would buy
+- [ ] Mix the modes: trust the site's own scripts by nonce and chosen third-party scripts by hash, so a vendor script that changes is blocked without hashing everything
+- [ ] Add a command that saves a copy of a vendor script for the site to serve itself, with its hash, so the script changes only when someone reviews it
+- [ ] Warn about hosts where anyone can receive data, such as analytics collectors, in `connect-src`, `img-src` and `form-action`. Bypass warnings cover only scripts, and a poisoned script can send data to any host the policy allows
+- [ ] Support a tighter policy for some pages, such as checkout, than for the rest of a crawl
+
+Noticing a compromise:
+
+- [ ] Have `gencsp verify` report requests that Chrome itself blocked. It drops them, so a page whose scripts never ran reports 0 violations
+- [ ] Document running `gencsp verify` on a schedule against the live site. In testing it caught each poisoned script that made a request the policy doesn't allow
+- [ ] Have `Tally` separate a source that suddenly appears across many clients from one that was always missing. The first is what an attack looks like
+- [ ] Add the poisoned-script page to the browser tests, covering each mode
+
+Getting a policy for a large site at all:
+
+- [ ] Add a `-timeout` flag. Five of eleven home pages needed more than the 30 second default, and only the library can change it
+- [ ] Add a flag for extra Chrome options, such as turning off `LocalNetworkAccessChecks`
+- [ ] Check the README's claim that loopback addresses aren't affected by local network checks. Chrome 158 blocked a script from one loopback port on a page from another
+- [ ] Warn when a page looks like a block page. One site sent headless Chrome a page of plain text, and got a policy that allows nothing, with exit status 0
+- [ ] Load each page more than once when collecting, and merge the results. Verifying found sources the first load didn't use, such as JSONP URLs that change on every load
+- [ ] Give each warning once. "couldn't hash" repeats for the same script
+- [ ] Say why a script couldn't be hashed
+
 ## Project housekeeping
 
 These can happen at any time.
