@@ -134,7 +134,7 @@ What the policy trusts:
 
 Noticing a compromise:
 
-- [ ] Have `gencsp verify` report requests that Chrome itself blocked. It drops them, so a page whose scripts never ran reports 0 violations
+- [x] Have `gencsp verify` report requests that Chrome itself blocked. It dropped them, so a page whose scripts never ran reported 0 violations
 - [ ] Document running `gencsp verify` on a schedule against the live site. In testing it caught each poisoned script that made a request the policy doesn't allow
 - [ ] Have `Tally` separate a source that suddenly appears across many clients from one that was always missing. The first is what an attack looks like
 - [ ] Add the poisoned-script page to the browser tests, covering each mode
