@@ -141,7 +141,7 @@ Noticing a compromise:
 
 Getting a policy for a large site at all:
 
-- [ ] Add a `-timeout` flag. Five of eleven home pages needed more than the 30 second default, and only the library can change it
+- [x] Add a `-timeout` flag. Five of eleven home pages needed more than the 30 second default, and only the library can change it
 - [ ] Add a flag for extra Chrome options, such as turning off `LocalNetworkAccessChecks`
 - [ ] Check the README's claim that loopback addresses aren't affected by local network checks. Chrome 158 blocked a script from one loopback port on a page from another
 - [ ] Warn when a page looks like a block page. One site sent headless Chrome a page of plain text, and got a policy that allows nothing, with exit status 0

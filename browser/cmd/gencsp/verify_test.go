@@ -233,6 +233,7 @@ func TestVerifyUsage(t *testing.T) {
 		{"no URL", []string{"verify"}, "usage: gencsp verify"},
 		{"both sources", []string{"verify", "-policy", "a", "-policy-file", "b", "https://a.test"}, "usage: gencsp verify"},
 		{"unknown flag", []string{"verify", "-meta", "https://a.test"}, "usage: gencsp verify"},
+		{"no time", []string{"verify", "-timeout", "0s", "https://a.test"}, "usage: gencsp verify"},
 		{"missing file", []string{"verify", "-policy-file", filepath.Join(t.TempDir(), "none"), "https://a.test"}, "gencsp: "},
 		{"blank file", []string{"verify", "-policy-file", file, "https://a.test"}, "the policy is empty"},
 		{"blank policy", []string{"verify", "-policy", " ", "https://a.test"}, "the policy is empty"},
@@ -247,6 +248,13 @@ func TestVerifyUsage(t *testing.T) {
 				t.Errorf("stderr = %q, want %q", stderr.String(), tt.want)
 			}
 		})
+	}
+}
+
+func TestVerifyTimeout(t *testing.T) {
+	code, _, stderr := gencsp(t, slow, "verify", "-policy", "default-src 'none'", "-timeout", "500ms")
+	if code != 1 || !strings.Contains(stderr, "hint: a page took too long") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
 	}
 }
 

@@ -88,6 +88,7 @@ violation: https://example.com/: img-src blocked https://example.com/late.png
 | `-exact-paths` | List resources by URL rather than by origin, which is tighter but needs regenerating whenever a resource moves |
 | `-no-verify` | Don't load the page again under the policy |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
+| `-timeout duration` | How long each page may take, such as `2m`. It defaults to `30s`, which large pages can pass |
 
 The library's module has a smaller CLI, `github.com/mikecb/minimalcsp/cmd/gencsp`, which works without a browser by reading only the HTML. It installs under the same name, so install the one you want. It can't see fonts, requests made by scripts, or anything added at runtime, and it says so. It lists scripts by URL, because it never downloads them to hash them.
 
@@ -111,6 +112,7 @@ gencsp verify -policy-file policy.txt -pages 20 https://example.com
 | `-policy-file path` | Read the policy to check from a file |
 | `-pages n` | Crawl up to `n` pages on the same origin from each URL |
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
+| `-timeout duration` | How long each page may take, such as `2m`. It defaults to `30s`, which large pages can pass |
 
 It exits with status 0 if nothing was blocked, 1 if something was or a page couldn't be checked, and 2 if the command itself is wrong.
 
