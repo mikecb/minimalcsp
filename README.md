@@ -289,10 +289,12 @@ Without a browser, use `minimalcsp.StaticCollector{}` or, if you already have th
 
 ### Reviewing a policy with an AI assistant
 
-minimalcsp builds the best policy it can from what a page does, and has no settings for what it can't know. Two calls are left to you, because they depend on how other companies' services work:
+minimalcsp builds the best policy it can from what a page does, and has no settings for what it can't know. Some calls are left to you, because they depend on how other companies' services work:
 
 - Which third-party scripts to pin with an `integrity` attribute beside their nonce, so that a changed one is blocked. This needs no change to the policy.
 - Which allowed hosts would deliver data to an attacker, such as an analytics collector anyone can sign up for.
+
+It also asks what each page handles, and is stricter where that matters. For a page that takes card numbers, it sets the policy against PCI DSS requirements 6.4.3 and 11.6.1, and says what the policy covers and what it doesn't.
 
 [`skills/minimalcsp-review`](skills/minimalcsp-review/SKILL.md) is a skill that walks an AI assistant through both, using `gencsp`'s output. Copy the folder to where your assistant looks for skills, such as `.claude/skills/` in your project for Claude Code, or give it the file to read. Then ask it to review your policy.
 
