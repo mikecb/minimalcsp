@@ -125,7 +125,7 @@ In November 2026, attackers changed the Optimizely snippets of about 178 sites. 
 
 What the policy trusts:
 
-- [ ] Warn when `'strict-dynamic'` is in a policy because of a script from another origin, and name that script. All seven policies generated for affected sites had it, and it's what lets a poisoned script load a second one from anywhere
+- [x] Warn when a policy with a nonce and `'strict-dynamic'` trusts scripts from another host, and name the host. All seven policies generated for affected sites had `'strict-dynamic'`, and it's what lets a poisoned script load a second one from anywhere
 - [ ] Say which scripts need `'strict-dynamic'`, so a site can see what removing one would buy
 - [ ] Mix the modes: trust the site's own scripts by nonce and chosen third-party scripts by hash, so a vendor script that changes is blocked without hashing everything
 - [ ] Add a command that saves a copy of a vendor script for the site to serve itself, with its hash, so the script changes only when someone reviews it

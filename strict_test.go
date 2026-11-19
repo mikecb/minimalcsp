@@ -187,6 +187,47 @@ func TestBuildByNonce(t *testing.T) {
 	}
 }
 
+func TestBuildWarnsWhenStrictDynamicTrustsAnotherHost(t *testing.T) {
+	findings := func(loaded bool) []minimalcsp.Finding {
+		return []minimalcsp.Finding{
+			{Directive: "script-src", URL: mustURL(t, "https://x.test/app.js"), Hashes: []string{"sha256-YQ=="}},
+			{Directive: "script-src", URL: mustURL(t, "https://vendor.test/js/2.js"), Hashes: []string{"sha256-Yg=="}},
+			{Directive: "script-src", URL: mustURL(t, "https://vendor.test/js/1.js"), Hashes: []string{"sha256-Yw=="}},
+			{Directive: "script-src", URL: mustURL(t, "https://cdn.test/extra.js"), Loaded: loaded},
+		}
+	}
+	tests := []struct {
+		name   string
+		trust  minimalcsp.ScriptTrust
+		loaded bool
+		want   int
+	}{
+		{"a nonce with strict-dynamic", minimalcsp.ByNonce, true, 1},
+		{"a nonce alone can't load more", minimalcsp.ByNonce, false, 0},
+		{"a hash blocks a script that changes", minimalcsp.ByHash, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page := &minimalcsp.Page{URL: mustURL(t, testURL), Findings: findings(tt.loaded)}
+			policy := minimalcsp.Build(page, minimalcsp.Options{Scripts: tt.trust})
+			var got []string
+			for _, w := range policy.Warnings {
+				if strings.Contains(w, "'strict-dynamic'") {
+					got = append(got, w)
+				}
+			}
+			if len(got) != tt.want {
+				t.Fatalf("warnings = %q, want %d", got, tt.want)
+			}
+			// One warning covers a host, however many scripts it serves, and
+			// neither the page's own scripts nor the loaded one get one.
+			if tt.want == 1 && (!strings.Contains(got[0], "the scripts from https://vendor.test whatever") || strings.Contains(got[0], "cdn.test")) {
+				t.Errorf("warning = %q", got[0])
+			}
+		})
+	}
+}
+
 func TestBuildByNonceWithLoadedScripts(t *testing.T) {
 	page := &minimalcsp.Page{URL: mustURL(t, testURL), Findings: []minimalcsp.Finding{
 		{Directive: "script-src", Code: "x()"},
