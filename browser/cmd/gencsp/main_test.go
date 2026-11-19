@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mikecb/minimalcsp"
 	"github.com/mikecb/minimalcsp/browser"
@@ -134,7 +135,7 @@ func TestVerifyFailure(t *testing.T) {
 
 func TestUsage(t *testing.T) {
 	var out, errOut bytes.Buffer
-	for _, args := range [][]string{{}, {"a", "b"}, {"-unknown", "x"}, {"-scripts", "other", "x"}} {
+	for _, args := range [][]string{{}, {"a", "b"}, {"-unknown", "x"}, {"-scripts", "other", "x"}, {"-timeout", "0s", "x"}} {
 		if code := run(context.Background(), args, &out, &errOut); code != 2 {
 			t.Errorf("run(%q) = %d, want 2", args, code)
 		}
@@ -147,6 +148,31 @@ func TestUsage(t *testing.T) {
 func TestLoadFailure(t *testing.T) {
 	code, _, stderr := gencsp(t, http.NotFound)
 	if code != 1 || !strings.Contains(stderr, "404") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+}
+
+// slow serves a page that takes longer than the timeout the tests give it.
+func slow(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(5 * time.Second):
+	}
+}
+
+func TestTimeout(t *testing.T) {
+	code, _, stderr := gencsp(t, slow, "-timeout", "500ms")
+	if code != 1 || !strings.Contains(stderr, "hint: a page took too long") {
+		t.Errorf("exit %d, stderr = %q", code, stderr)
+	}
+}
+
+func TestTimeoutAllowsASlowPage(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(700 * time.Millisecond)
+		page(`<img src=/i.png>`)(w, r)
+	}
+	if code, _, stderr := gencsp(t, handler, "-timeout", "1m"); code != 0 {
 		t.Errorf("exit %d, stderr = %q", code, stderr)
 	}
 }
