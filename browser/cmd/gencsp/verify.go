@@ -101,14 +101,17 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		for _, warning := range minimalcsp.ParsePolicy(p).Warnings {
 			fmt.Fprintln(stderr, "warning:", warning)
 		}
-		violations, err := collector.Verify(ctx, p, pagesUnder[p]...)
+		checked, err := collector.Check(ctx, p, pagesUnder[p]...)
 		if err != nil {
 			return fail(stderr, "gencsp: verifying:", err)
 		}
-		for _, v := range violations {
+		for _, warning := range checked.Warnings {
+			fmt.Fprintln(stderr, "warning:", warning)
+		}
+		for _, v := range checked.Violations {
 			fmt.Fprintf(stderr, "violation: %s: %s\n", v.Page, v)
 		}
-		found += len(violations)
+		found += len(checked.Violations)
 	}
 	fmt.Fprintf(stdout, "checked %d %s: %d %s\n", len(urls), plural(len(urls), "page", "pages"), found, plural(found, "violation", "violations"))
 	if found > 0 {

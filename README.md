@@ -114,7 +114,13 @@ gencsp verify -policy-file policy.txt -pages 20 https://example.com
 | `-no-sandbox` | Run Chrome without its sandbox, which some containers need |
 | `-timeout duration` | How long each page may take, such as `2m`. It defaults to `30s`, which large pages can pass |
 
-It exits with status 0 if nothing was blocked, 1 if something was or a page couldn't be checked, and 2 if the command itself is wrong. `warning:` lines name [sources that let injected markup run code](#choosing-how-to-trust-scripts). They don't affect the exit status.
+It exits with status 0 if nothing was blocked, 1 if something was or a page couldn't be checked, and 2 if the command itself is wrong.
+
+`warning:` lines don't affect the exit status, so read them before trusting a clean result:
+
+- A [source that lets injected markup run code](#choosing-how-to-trust-scripts).
+- A request that Chrome itself blocked, whatever the policy. Whatever depended on it never happened, so it wasn't checked. A page whose scripts Chrome refuses does nothing, and has no violations.
+- A page that was still making requests when the check stopped.
 
 The policy runs in report-only mode, so one blocked resource can't hide what depended on it, and it reports everything, including code a page tries and copes without. Any `report-uri` is left out, so checking a policy adds nothing to your reports. A `<meta>` policy isn't read from the page, so pass it with `-policy`, and remember that a tag in the page stays in force during the check.
 
@@ -279,7 +285,7 @@ for _, violation := range violations {
 updated := policy.Apply(document, pageURL)
 ```
 
-`Apply` changes nothing else in the page, so it's safe to run in a build step. `collector.Verify` checks a policy string against a page as it stands.
+`Apply` changes nothing else in the page, so it's safe to run in a build step. `collector.Verify` checks a policy string against a page as it stands, and `collector.Check` does the same and also returns warnings about anything it couldn't check.
 
 For a host that can't set headers, use `policy.ApplyMeta` to add the tag too, and `collector.VerifyMeta` to check the page with it in force. `minimalcsp.InsertMeta` does the same for a policy you wrote yourself.
 
