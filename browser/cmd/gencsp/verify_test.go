@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -139,6 +140,28 @@ func TestVerifyWarnsAboutBypasses(t *testing.T) {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
 	if !strings.Contains(stderr, "warning: script-src allows https://www.google.com, which has a JSONP endpoint") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestVerifyWarnsAboutWhatChromeBlocked(t *testing.T) {
+	// The script is on another origin, and says only its own origin may load
+	// it. Chrome refuses, so the image the script would load never gets checked.
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/a.js" {
+			_, port, _ := net.SplitHostPort(r.Host)
+			page(`<script src="http://localhost:`+port+`/a.js"></script>`)(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		fmt.Fprint(w, `new Image().src = "http://other.test/i.png"`)
+	}
+	code, _, stderr := gencsp(t, handler, "verify", "-policy", "default-src 'none'; script-src http://localhost:*; img-src 'self'")
+	if code != 0 || strings.Contains(stderr, "violation:") {
+		t.Errorf("nothing should be blocked by the policy: exit %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "warning: ") || !strings.Contains(stderr, "Chrome blocked") || !strings.Contains(stderr, "/a.js") {
 		t.Errorf("stderr = %q", stderr)
 	}
 }

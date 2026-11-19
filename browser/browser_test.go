@@ -457,6 +457,23 @@ func TestBusyPageGetsAWarning(t *testing.T) {
 	}
 }
 
+func TestCheckWarnsAboutABusyPage(t *testing.T) {
+	port := serve(t, site{
+		"site.test/":     html(`<script>setInterval(() => fetch("/poll"), 20)</script>`),
+		"site.test/poll": html(``),
+	})
+	c := collector()
+	c.MaxWait = 300 * time.Millisecond
+	checked, err := c.Check(t.Context(), "default-src 'self' 'unsafe-inline'", "http://site.test:"+port+"/")
+	requireChrome(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(checked.Warnings, func(w string) bool { return strings.Contains(w, "still making requests") }) {
+		t.Errorf("warnings = %v", checked.Warnings)
+	}
+}
+
 func TestActions(t *testing.T) {
 	port := serve(t, site{
 		"site.test/": html(`<button id=b>Open</button><script>
@@ -642,6 +659,42 @@ func TestBlockedRequestsAreReported(t *testing.T) {
 		return strings.Contains(w, "blocked") && strings.Contains(w, "/a.js")
 	}) {
 		t.Errorf("warnings = %v", page.Warnings)
+	}
+}
+
+func TestCheckWarnsAboutBlockedRequests(t *testing.T) {
+	port := serve(t, site{
+		"site.test/":     html(`<script src=/a.js></script>`),
+		"site.test/a.js": content("text/javascript", `new Image().src = "http://other.test/i.png"`),
+	})
+	c := collector()
+	c.Options = append(c.Options, chromedp.Flag("disable-features", "Translate"))
+	pageURL := "http://site.test:" + port + "/"
+	checked, err := c.Check(t.Context(), "default-src 'none'; script-src 'self'; img-src 'self'", pageURL)
+	requireChrome(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The script never ran, so the image it loads was never blocked.
+	if len(checked.Violations) != 0 {
+		t.Errorf("violations = %v", checked.Violations)
+	}
+	if !slices.ContainsFunc(checked.Warnings, func(w string) bool {
+		return strings.HasPrefix(w, pageURL+": Chrome blocked") && strings.Contains(w, "/a.js")
+	}) {
+		t.Errorf("warnings = %v", checked.Warnings)
+	}
+}
+
+func TestCheckHasNoWarningsForAPageThatLoads(t *testing.T) {
+	port := serve(t, site{"site.test/": html(`<img src=/i.png>`)})
+	checked, err := collector().Check(t.Context(), "default-src 'none'", "http://site.test:"+port+"/")
+	requireChrome(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checked.Warnings) != 0 || len(checked.Violations) == 0 {
+		t.Errorf("checked = %+v", checked)
 	}
 }
 
