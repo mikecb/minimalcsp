@@ -17,6 +17,7 @@ Each phase builds on the one before it. Goals and design are in the [README](REA
 - **Reports are untrusted:** anyone can send one, so a report never adds a source that can run code. Scripts need a hash, which reports don't have, and `base-uri`, `object-src` and `worker-src` could all let an attacker run code. These become warnings, and anything else is a suggestion for a person to review.
 - **Report delivery:** policies use `report-uri`, which the specification calls deprecated. Chrome ignores it when `report-to` is present, and `report-to` doesn't work on plain HTTP, so listing both loses every report on those pages. Testing in Chrome found this. Revisit if a browser drops `report-uri`.
 - **Bypass warnings:** the list of hosts is short, and each JSONP and AngularJS entry was run in Chrome, because most of the JSONP endpoints in Google's CSP Evaluator are gone. Warnings cover what a source allows, so a whole host warns and an exact URL usually doesn't. Flash isn't covered, since browsers no longer run it, and neither are hosts that need `'unsafe-eval'`. A site that loads AngularJS itself isn't covered, because that's about the page, not the host.
+- **Judgment calls:** the tool makes the best policy it can from what it saw, with no settings for things it can't know. Which third-party scripts are stable enough to pin, and which allowed hosts would deliver data to an attacker, depend on how other companies' services work, and one page load can't show that. Those go in a [skill](skills/minimalcsp-review/SKILL.md) for the user's own AI assistant, which can ask, look things up and say when it isn't sure. A list of risky hosts in the library was the other option, and it would always be incomplete while looking complete.
 - **Default:** policies trust scripts by hash, even though that means changing the page, because a policy that lists URLs doesn't meet the first goal. Listing URLs is still available as an explicit choice.
 
 ## Open questions
@@ -127,9 +128,9 @@ What the policy trusts:
 
 - [ ] Warn when `'strict-dynamic'` is in a policy because of a script from another origin, and name that script. All seven policies generated for affected sites had it, and it's what lets a poisoned script load a second one from anywhere
 - [ ] Say which scripts need `'strict-dynamic'`, so a site can see what removing one would buy
-- [ ] Mix the modes: trust the site's own scripts by nonce and chosen third-party scripts by hash, so a vendor script that changes is blocked without hashing everything
+- [x] Mix the modes: pin chosen third-party scripts by hash on a page that uses nonces. An `integrity` attribute does this beside a nonce with no change to the policy, and the review skill picks the scripts
 - [ ] Add a command that saves a copy of a vendor script for the site to serve itself, with its hash, so the script changes only when someone reviews it
-- [ ] Warn about hosts where anyone can receive data, such as analytics collectors, in `connect-src`, `img-src` and `form-action`. Bypass warnings cover only scripts, and a poisoned script can send data to any host the policy allows
+- [x] Point out hosts where anyone can receive data, such as analytics collectors, in `connect-src`, `img-src` and `form-action`. A poisoned script can send data to any host the policy allows. The review skill does this
 - [ ] Support a tighter policy for some pages, such as checkout, than for the rest of a crawl
 
 Noticing a compromise:
