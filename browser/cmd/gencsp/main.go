@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,12 +14,16 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/chromedp/chromedp"
 
 	"github.com/mikecb/minimalcsp"
 	"github.com/mikecb/minimalcsp/browser"
 )
+
+// defaultTimeout is the collector's own default, repeated so that usage shows it.
+const defaultTimeout = 30 * time.Second
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -39,6 +44,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	maxPages := flags.Int("pages", 1, "crawl up to this many pages on the same origin")
 	skipVerify := flags.Bool("no-verify", false, "don't check the page under the generated policy")
 	noSandbox := flags.Bool("no-sandbox", false, "run Chrome without its sandbox, which some containers need")
+	timeout := flags.Duration("timeout", defaultTimeout, "how long each page may take to load")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: gencsp [flags] <url>")
 		fmt.Fprintln(stderr, "       gencsp verify [flags] <url>...")
@@ -52,7 +58,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		"nonce": minimalcsp.ByNonce,
 		"url":   minimalcsp.ByURL,
 	}[*scripts]
-	if flags.NArg() != 1 || !ok {
+	if flags.NArg() != 1 || !ok || *timeout <= 0 {
 		flags.Usage()
 		return 2
 	}
@@ -66,14 +72,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	var collector browser.Collector
+	collector := browser.Collector{Timeout: *timeout}
 	if *noSandbox {
 		collector.Options = append(collector.Options, chromedp.NoSandbox)
 	}
 	pages, err := collector.Crawl(ctx, flags.Arg(0), *maxPages)
 	if err != nil {
-		fmt.Fprintln(stderr, "gencsp:", err)
-		return 1
+		return fail(stderr, "gencsp:", err)
 	}
 	policy := minimalcsp.Build(minimalcsp.Merge(pages...), minimalcsp.Options{Scripts: trust, ExactPaths: *exactPaths})
 
@@ -120,8 +125,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	violations, err := verify(ctx, policy, urls...)
 	if err != nil {
-		fmt.Fprintln(stderr, "gencsp: verifying:", err)
-		return 1
+		return fail(stderr, "gencsp: verifying:", err)
 	}
 	status := 0
 	for _, v := range violations {
@@ -134,6 +138,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "hint: scripts trusted by hash can't use import, and need CORS if they're cross-origin, so try -scripts nonce")
 	}
 	return status
+}
+
+// fail prints err and returns the exit status for it. A page that ran out of
+// time gets a hint, because the fix is a flag.
+func fail(stderr io.Writer, prefix string, err error) int {
+	fmt.Fprintln(stderr, prefix, err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		fmt.Fprintln(stderr, "hint: a page took too long, so try a longer -timeout")
+	}
+	return 1
 }
 
 // explained reports whether v is code the policy already says it blocks.

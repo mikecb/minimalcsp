@@ -25,6 +25,7 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	file := flags.String("policy-file", "", "read the policy to check from this file")
 	maxPages := flags.Int("pages", 1, "crawl up to this many pages on the same origin from each URL")
 	noSandbox := flags.Bool("no-sandbox", false, "run Chrome without its sandbox, which some containers need")
+	timeout := flags.Duration("timeout", defaultTimeout, "how long each page may take to load")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "usage: gencsp verify [flags] <url>...")
 		flags.PrintDefaults()
@@ -32,7 +33,7 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if flags.Parse(args) != nil {
 		return 2
 	}
-	if flags.NArg() == 0 || (*given != "" && *file != "") {
+	if flags.NArg() == 0 || (*given != "" && *file != "") || *timeout <= 0 {
 		flags.Usage()
 		return 2
 	}
@@ -50,7 +51,7 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	var collector browser.Collector
+	collector := browser.Collector{Timeout: *timeout}
 	if *noSandbox {
 		collector.Options = append(collector.Options, chromedp.NoSandbox)
 	}
@@ -60,8 +61,7 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		for _, start := range flags.Args() {
 			pages, err := collector.Crawl(ctx, start, *maxPages)
 			if err != nil {
-				fmt.Fprintln(stderr, "gencsp:", err)
-				return 1
+				return fail(stderr, "gencsp:", err)
 			}
 			for _, page := range pages {
 				urls = append(urls, page.URL.String())
@@ -103,8 +103,7 @@ func verify(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		violations, err := collector.Verify(ctx, p, pagesUnder[p]...)
 		if err != nil {
-			fmt.Fprintln(stderr, "gencsp: verifying:", err)
-			return 1
+			return fail(stderr, "gencsp: verifying:", err)
 		}
 		for _, v := range violations {
 			fmt.Fprintf(stderr, "violation: %s: %s\n", v.Page, v)
